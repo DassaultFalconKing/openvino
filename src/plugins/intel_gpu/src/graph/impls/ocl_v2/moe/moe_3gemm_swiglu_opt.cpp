@@ -26,6 +26,7 @@ using ov::intel_gpu::ocl::moe::ResidentExpertWeightProvider;
 #    include <iostream>
 #    include <limits>
 #    include <mutex>
+#    include <numeric>
 #    include <oneapi/dnnl/dnnl.hpp>
 #    include <oneapi/dnnl/dnnl_ocl.hpp>
 #    include <sstream>
@@ -688,6 +689,9 @@ public:
     int _gate_up_group_size;
     int _down_group_size;
     std::shared_ptr<IExpertWeightProvider> _weight_provider;
+    // OTD slot ids read by kernels that are still in flight when execute() returns,
+    // so the buffer must outlive the per-call scratch_buffers.
+    memory::ptr _expert_index_buffer;
 
     // --- OTD helper methods (used when _weight_provider->is_offloaded()) ---
 
@@ -786,15 +790,16 @@ public:
         // Write remapped slot IDs to GPU buffer
         auto& engine = instance.get_network().get_engine();
         const size_t topk_bytes = topk_count * sizeof(uint32_t);
-        if (!scratch._expert_index_buffer || scratch._expert_index_buffer->size() < topk_bytes) {
+        if (!_expert_index_buffer || _expert_index_buffer->size() < topk_bytes) {
             auto layout = cldnn::layout({1, 1, 1, static_cast<ov::Dimension::value_type>(topk_bytes)}, ov::element::i8, cldnn::format::bfyx);
-            scratch._expert_index_buffer = engine.allocate_memory(layout, allocation_type::usm_host, false);
+            _expert_index_buffer = engine.allocate_memory(layout, allocation_type::usm_host, false);
         }
         std::vector<uint32_t> slots_u32(lease->size());
         for (size_t i = 0; i < lease->size(); i++) {
             slots_u32[i] = static_cast<uint32_t>((*lease)[i]);
         }
-        scratch._expert_index_buffer->copy_from(stream, slots_u32.data(), 0, 0, topk_bytes, true);
+        _expert_index_buffer->copy_from(stream, slots_u32.data(), 0, 0, topk_bytes, true);
+        scratch._expert_index_buffer = _expert_index_buffer;
 
         set_otd_weight_pointers(instance, scratch);
         needs_fallback = false;
@@ -826,16 +831,16 @@ public:
         // Write remapped slot IDs to GPU buffer
         auto& engine = instance.get_network().get_engine();
         const size_t topk_bytes = topk_count * sizeof(uint32_t);
-        if (!scratch._expert_index_buffer || scratch._expert_index_buffer->size() < topk_bytes) {
+        if (!_expert_index_buffer || _expert_index_buffer->size() < topk_bytes) {
             auto layout = cldnn::layout({1, 1, 1, static_cast<ov::Dimension::value_type>(topk_bytes)}, ov::element::i8, cldnn::format::bfyx);
-            scratch._expert_index_buffer = engine.allocate_memory(layout, allocation_type::usm_host, false);
+            _expert_index_buffer = engine.allocate_memory(layout, allocation_type::usm_host, false);
         }
         std::vector<uint32_t> slots_u32(lease->size());
         for (size_t i = 0; i < lease->size(); i++) {
             slots_u32[i] = static_cast<uint32_t>((*lease)[i]);
         }
-        scratch._expert_index_buffer->copy_from(stream, slots_u32.data(), 0, 0, topk_bytes, true);
-        batch_mem_ptr = scratch._expert_index_buffer;
+        _expert_index_buffer->copy_from(stream, slots_u32.data(), 0, 0, topk_bytes, true);
+        batch_mem_ptr = _expert_index_buffer;
         needs_fallback = false;
     }
 
@@ -1686,7 +1691,8 @@ public:
                                 {scratch.y},
                                 {final_hidden_states_mem_ptr},
                                 {token_num, static_cast<size_t>(_hidden_size)},
-                                {1, std::min(max_work_group_size, size_t{1024})},
+                                // The local dimension must divide the global hidden dimension.
+                                {1, std::gcd(static_cast<size_t>(_hidden_size), std::min(max_work_group_size, size_t{1024}))},
                                 instance.needs_completion_event());
         }
         return ret;
