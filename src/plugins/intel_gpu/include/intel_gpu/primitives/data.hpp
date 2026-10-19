@@ -389,9 +389,28 @@ public:
 
         const auto _allocation_type = mem->get_allocation_type();
         ob << make_data(&_allocation_type, sizeof(_allocation_type));
+        // OTD partial uploads are a small physical buffer reinterpreted as the full Constant
+        // layout. mem->size() is that logical layout, so persisting it reads past the allocation
+        // and a later import allocates the full weights again.
+        ob << _skip_device_transfer;
 
         size_t data_size = mem->size();
+        if (_skip_device_transfer) {
+            const auto tracker = mem->get_mem_tracker();
+            OPENVINO_ASSERT(tracker != nullptr, "[GPU] OTD partial constant has no allocation tracker");
+            data_size = tracker->size();
+            OPENVINO_ASSERT(data_size > 0 && data_size <= mem->size(),
+                            "[GPU] OTD partial constant physical size ", data_size,
+                            " is outside the logical layout ", mem->size());
+        }
         ob << make_data(&data_size, sizeof(size_t));
+
+        if (_skip_device_transfer) {
+            // Resident expert bytes are filled from WEIGHTS_PATH at execute time.
+            bool weightless_caching = false;
+            ob << weightless_caching;
+            return;
+        }
 
         bool do_weightless_caching = cache_info->save(ob, data_size);
         const auto& engine = mem->get_engine();
@@ -425,9 +444,24 @@ public:
 
         allocation_type _allocation_type = allocation_type::unknown;
         ib >> make_data(&_allocation_type, sizeof(_allocation_type));
+        ib >> _skip_device_transfer;
 
         size_t data_size = 0;
         ib >> make_data(&data_size, sizeof(size_t));
+
+        if (_skip_device_transfer) {
+            OPENVINO_ASSERT(data_size > 0 && data_size <= output_layout.bytes_count(),
+                            "[GPU] OTD partial cache entry has invalid physical size ", data_size,
+                            " for layout of ", output_layout.bytes_count(), " bytes");
+            bool weightless_caching = false;
+            ib >> weightless_caching;
+            OPENVINO_ASSERT(!weightless_caching,
+                            "[GPU] OTD partial constants are restored from WEIGHTS_PATH, not a weightless payload");
+            const layout physical_layout({static_cast<ov::Dimension::value_type>(data_size)}, data_types::u8, format::bfyx);
+            auto physical = ib.get_engine().allocate_memory(physical_layout, _allocation_type, false);
+            mem = ib.get_engine().reinterpret_buffer(*physical, output_layout);
+            return;
+        }
 
         OPENVINO_ASSERT(data_size == output_layout.bytes_count(),
                "[GPU] Corrupt cache blob: data_size=", data_size,

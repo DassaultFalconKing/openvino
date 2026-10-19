@@ -325,6 +325,8 @@ membuf make_oversized_data_blob(const layout& output_layout, size_t malicious_da
 
     ob << output_layout;
     ob << make_data(&alloc_type, sizeof(alloc_type));
+    bool skip_device_transfer = false;
+    ob << skip_device_transfer;
     ob << make_data(&malicious_data_size, sizeof(size_t));
 
     bool weightless_caching = false;  // take the plain (non-weightless) path
@@ -379,7 +381,7 @@ TEST(cache_serialization, load_weights_rejects_data_size_exceeding_layout) {
     ASSERT_THROW(data_prim.load_weights(ib, /*weights_memory=*/nullptr, /*model_tensor_base=*/nullptr), ov::AssertFailure);
 }
 
-TEST(cache_serialization, otd_partial_allocation_uses_weightless_metadata) {
+TEST(cache_serialization, otd_partial_allocation_preserves_physical_size) {
     auto& engine = get_test_engine();
     const layout full_layout({1, 1, 1, 64}, data_types::u8, format::bfyx);
     const layout resident_layout({1, 1, 1, 16}, data_types::u8, format::bfyx);
@@ -387,25 +389,38 @@ TEST(cache_serialization, otd_partial_allocation_uses_weightless_metadata) {
     auto partial_memory = engine.reinterpret_buffer(*resident_memory, full_layout);
 
     data partial_data("partial", partial_memory, true);
-    partial_data.cache_info->set_constant_info(0,
-                                                full_layout.bytes_count(),
-                                                ov::element::u8,
-                                                ov::element::u8,
-                                                full_layout.get_shape());
 
     auto full_memory = engine.allocate_memory(full_layout, true);
     data plain_data("plain", full_memory);
 
-    const auto serialized_size = [](const data& data_prim) {
-        membuf mem_buf;
+    const auto serialize = [](const data& data_prim, membuf& mem_buf) {
         std::ostream out_mem(&mem_buf);
         BinaryOutputBuffer ob(out_mem);
         ob.set_stream(get_test_stream_ptr().get());
         data_prim.save(ob);
+        const uint32_t sentinel = 0x5a13cafe;
+        ob << sentinel;
         return static_cast<size_t>(std::distance(mem_buf.begin(), mem_buf.end()));
     };
 
     // OTD exposes the full Constant layout while allocating only resident slots.
-    // Weightless caching must serialize metadata instead of reading that full layout.
-    EXPECT_LT(serialized_size(partial_data), serialized_size(plain_data));
+    // The blob must store the physical size and must not read the logical layout.
+    membuf partial_blob;
+    membuf plain_blob;
+    EXPECT_LT(serialize(partial_data, partial_blob), serialize(plain_data, plain_blob));
+
+    partial_blob.pubseekpos(0);
+    std::istream in_mem(&partial_blob);
+    BinaryInputBuffer ib(in_mem, engine);
+    data loaded;
+    loaded.load(ib);
+    loaded.load_weights(ib, /*weights_memory=*/nullptr, /*model_tensor_base=*/nullptr);
+    ASSERT_TRUE(loaded.skip_device_transfer());
+    ASSERT_NE(loaded.mem, nullptr);
+    ASSERT_NE(loaded.mem->get_mem_tracker(), nullptr);
+    EXPECT_EQ(loaded.mem->get_layout().bytes_count(), full_layout.bytes_count());
+    EXPECT_EQ(loaded.mem->get_mem_tracker()->size(), resident_layout.bytes_count());
+    uint32_t sentinel = 0;
+    ib >> sentinel;
+    EXPECT_EQ(sentinel, 0x5a13cafe);
 }
