@@ -26,6 +26,7 @@ using ov::intel_gpu::ocl::moe::ResidentExpertWeightProvider;
 #    include <iostream>
 #    include <limits>
 #    include <mutex>
+#    include <numeric>
 #    include <oneapi/dnnl/dnnl.hpp>
 #    include <oneapi/dnnl/dnnl_ocl.hpp>
 #    include <sstream>
@@ -1690,7 +1691,8 @@ public:
                                 {scratch.y},
                                 {final_hidden_states_mem_ptr},
                                 {token_num, static_cast<size_t>(_hidden_size)},
-                                {1, std::min(max_work_group_size, size_t{1024})},
+                                // The local dimension must divide the global hidden dimension.
+                                {1, std::gcd(static_cast<size_t>(_hidden_size), std::min(max_work_group_size, size_t{1024}))},
                                 instance.needs_completion_event());
         }
         return ret;
