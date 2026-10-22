@@ -1,15 +1,21 @@
 // Copyright (C) 2018-2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
-// Host-only UMA-02 harness (path B): byte-parity, corrupt negatives, LRU, allocator flag.
-// GPU_LIVE cases (U2-G*) are intentionally absent — COMPUTE_GO not granted.
+// UMA-02 harness (path B): byte-parity, corrupt negatives, LRU, allocator flag.
+// GPU_LIVE cases (U2-G*) are bounded short-correctness runs; COMPUTE_GO delegated for this matrix only.
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <mutex>
 #include <random>
 #include <string>
 #include <vector>
@@ -22,6 +28,9 @@
 #include "openvino/op/parameter.hpp"
 #include "ov_ops/moe_compressed.hpp"
 #include "intel_gpu/runtime/internal_properties.hpp"
+#include "runtime/ocl/ocl_engine.hpp"
+#include "runtime/ocl/ocl_kernel_builder.hpp"
+#include "runtime/ocl/ocl_stream.hpp"
 
 using namespace cldnn;
 using namespace tests;
@@ -491,4 +500,287 @@ TEST(moe_otd_uma02, U2_A03_fence_before_publish) {
     EXPECT_EQ(moe_otd::path_b_scatter_entries(), 1u);
     EXPECT_EQ(moe_otd::path_b_fence_calls(), 1u);
     ASSERT_TRUE(provider->cache().lookup(0).hit);
+}
+
+// -------- GPU_LIVE harness (short correctness; COMPUTE_GO delegated for this bounded matrix) --------
+
+namespace {
+
+// Minimal real GPU kernel: schedule-independent FNV-1a digest of a byte window, per work item.
+// Work item gid digests bytes [gid*chunk, gid*chunk+chunk) of [begin, begin+n) so results never
+// depend on work-group scheduling; no atomics, no reductions.
+constexpr uint32_t kDigestWorkItems = 64;
+static const char kDigestKernelSource[] = R"(
+__kernel void uma02_digest(__global const uchar* src, __global uint* dst, const uint begin, const uint n) {
+    const uint gid = get_global_id(0);
+    const uint gsz = get_global_size(0);
+    const uint chunk = (n + gsz - 1u) / gsz;
+    const uint start = begin + gid * chunk;
+    const uint end = min(start + chunk, begin + n);
+    uint acc = 0x811C9DC5u;
+    for (uint i = start; i < end; i++) {
+        acc ^= (uint)(src[i]);
+        acc *= 0x01000193u;
+    }
+    dst[gid] = acc;
+}
+)";
+
+cldnn::kernel::ptr get_uma02_digest_kernel() {
+    static cldnn::kernel::ptr cached = nullptr;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        auto& engine = get_test_engine();
+        auto builder = engine.create_kernel_builder();
+        OPENVINO_ASSERT(builder != nullptr, "uma02: engine returned no kernel builder");
+        std::vector<cldnn::kernel::ptr> out;
+        const char* src = kDigestKernelSource;
+        builder->build_kernels(src, std::strlen(kDigestKernelSource), cldnn::KernelFormat::SOURCE, "", out);
+        OPENVINO_ASSERT(!out.empty(), "uma02: digest kernel build produced no kernels");
+        cached = out.front();
+    });
+    return cached;
+}
+
+// Enqueues the digest kernel over mem[begin .. begin+n) and returns the per-work-item digests.
+std::vector<uint32_t> gpu_digest_window(const cldnn::memory::ptr& mem, uint32_t begin, uint32_t n) {
+    auto& stream = downcast<cldnn::ocl::ocl_stream>(get_test_stream());
+    cldnn::layout out_layout({kDigestWorkItems}, data_types::i32, format::bfyx);
+    auto out_mem = get_test_engine().allocate_memory(out_layout);
+
+    cldnn::kernel_arguments_desc desc;
+    desc.workGroups.global = {kDigestWorkItems};
+    desc.workGroups.local = {kDigestWorkItems};
+    desc.arguments = {
+        {cldnn::argument_desc::Types::INPUT, 0},
+        {cldnn::argument_desc::Types::OUTPUT, 0},
+        {cldnn::argument_desc::Types::SCALAR, 0},
+        {cldnn::argument_desc::Types::SCALAR, 1}};
+    desc.layerID = "uma02_g01_digest";
+
+    cldnn::scalars_desc scalars;
+    scalars.push_back({cldnn::scalar_desc::Types::UINT32, {0}});
+    scalars.back().v.u32 = begin;
+    scalars.push_back({cldnn::scalar_desc::Types::UINT32, {0}});
+    scalars.back().v.u32 = n;
+    desc.scalars = scalars;
+
+    cldnn::kernel_arguments_data data;
+    data.inputs = {mem};
+    data.outputs = {out_mem};
+    data.scalars = &scalars;
+
+    auto kernel = get_uma02_digest_kernel();
+    stream.set_arguments(*kernel, desc, data);
+    (void)stream.enqueue_kernel(*kernel, desc, data, {});
+    stream.finish();
+
+    std::vector<uint32_t> output(kDigestWorkItems);
+    cldnn::mem_lock<int32_t, cldnn::mem_lock_type::read> lock(out_mem, get_test_stream());
+    for (size_t i = 0; i < output.size(); i++) {
+        output[i] = static_cast<uint32_t>(lock[i]);
+    }
+    return output;
+}
+
+// CPU-side reference of the same FNV-1a windowing used by the kernel.
+std::vector<uint32_t> cpu_digest_reference(const uint8_t* bytes, size_t n) {
+    uint32_t num = static_cast<uint32_t>(kDigestWorkItems);
+    uint32_t chunk = (static_cast<uint32_t>(n) + num - 1u) / num;
+    std::vector<uint32_t> digests(num, 0x811C9DC5u);
+    for (uint32_t gid = 0; gid < num; gid++) {
+        const size_t start = static_cast<size_t>(gid) * chunk;
+        const size_t end = std::min(start + chunk, n);
+        uint32_t acc = 0x811C9DC5u;
+        for (size_t i = start; i < end; i++) {
+            acc ^= static_cast<uint32_t>(bytes[i]);
+            acc *= 0x01000193u;
+        }
+        digests[gid] = acc;
+    }
+    return digests;
+}
+
+void print_gpu_device_header() {
+    auto& engine = get_test_engine();
+    const auto& info = engine.get_device_info();
+    std::cout << "[U2-G] device=" << info.dev_name << std::endl;
+}
+
+}  // namespace
+
+// U2-G01: a real GPU kernel reads path-B (usm_host) residents after a pack fill; the GPU-visible
+// bytes must match the path-A (usm_device) reference and the CPU reference digest, tensor by tensor.
+TEST(moe_otd_uma02, U2_G01_kernel_reads_path_b_residents_match_path_a) {
+    Uma02Fixture fx;
+    fx.build_pack();
+    const auto pack = *moe_otd::PackLayout::open(fx.pack_path(), fx.spec());
+    print_gpu_device_header();
+
+    cldnn::moe_weights a_w, b_w;
+    auto a_mems = fx.allocate_resident(a_w, allocation_type::usm_device);
+    auto b_mems = fx.allocate_resident(b_w, allocation_type::usm_host);
+
+    auto a_provider = fx.make_provider();
+    a_provider->configure_pack(moe_otd::PackMode::require, fx.pack_dir, fx.layouts);
+    a_provider->bind(a_w);
+    auto b_provider = fx.make_provider();
+    b_provider->configure_pack(moe_otd::PackMode::require, fx.pack_dir, fx.layouts);
+    b_provider->bind(b_w);
+
+    const uint32_t expert = 2;
+    const size_t a_slot = a_provider->acquire_one(expert, get_test_stream());
+    const size_t b_slot = b_provider->acquire_one(expert, get_test_stream());
+    ASSERT_EQ(a_slot, b_slot);
+    get_test_stream().finish();
+
+    size_t per_expert = 0;
+    for (size_t t = 0; t < moe_otd::pack_tensor_count && per_expert == 0; t++) {
+        if (pack.tensor_bytes(t) != 0) {
+            per_expert = static_cast<size_t>(pack.tensor_bytes(t));
+        }
+    }
+    OPENVINO_ASSERT(per_expert > 0, "uma02 g01: all pack tensors are zero-size");
+    const uint32_t slot_base = static_cast<uint32_t>(a_slot * per_expert);
+
+    int mismatches = 0;
+    for (size_t t = 0; t < moe_otd::pack_tensor_count; t++) {
+        const size_t bytes = static_cast<size_t>(pack.tensor_bytes(t));
+        if (bytes == 0) {
+            continue;
+        }
+        // CPU reference from the path-A resident dump (fixture dumps also re-assert CPU parity).
+        auto a_dump = dump_nine(a_mems, a_slot, pack);
+        auto b_dump = dump_nine(b_mems, b_slot, pack);
+        ASSERT_EQ(a_dump[t], b_dump[t]) << "tensor " << t << ": CPU-side path A/B parity broke";
+
+        const auto ref = cpu_digest_reference(a_dump[t].data(), bytes);
+        const auto digest_a = gpu_digest_window(a_mems[t], slot_base, static_cast<uint32_t>(bytes));
+        ASSERT_EQ(digest_a, ref) << "tensor t=" << t << ": GPU kernel digest != CPU reference on path-A resident";
+        const auto digest_b = gpu_digest_window(b_mems[t], slot_base, static_cast<uint32_t>(bytes));
+        for (size_t g = 0; g < ref.size(); g++) {
+            if (digest_b[g] != ref[g]) {
+                FAIL() << "tensor t=" << t << " work-item " << g << ": path-B usm_host resident bytes differ on GPU, gpu=0x"
+                       << std::hex << digest_b[g] << " ref=0x" << ref[g] << std::dec;
+                mismatches++;
+                break;
+            }
+        }
+        std::cout << "[U2-G01] tensor=" << t << " bytes=" << bytes << " digest_ref=0x" << std::hex << ref[0]
+                  << " path_a=0x" << digest_a[0] << " path_b=0x" << digest_b[0] << std::dec << std::endl;
+    }
+    EXPECT_EQ(mismatches, 0);
+}
+
+// U2-G02: exactly one cold miss — record OTD counters (path B and path A reference). No win claim.
+TEST(moe_otd_uma02, U2_G02_one_cold_miss_counters) {
+    print_gpu_device_header();
+    auto* perf = moe_otd::get_perf_counters();
+    if (perf == nullptr) {
+        if (std::getenv("MOE_OTD_PERF_LOG") != nullptr) {
+            FAIL() << "MOE_OTD_PERF_LOG is set but get_perf_counters() still returned nullptr";
+        }
+        GTEST_SKIP() << "MOE_OTD_PERF_LOG unset in this run; rerun suite with MOE_OTD_PERF_LOG=1";
+    }
+
+    using moe_otd::OtdPerfSnapshot;
+
+    auto record_miss = [&](cldnn::moe_weights& w, allocation_type alloc, const char* tag) {
+        Uma02Fixture fx;
+        fx.build_pack();
+        auto mems = fx.allocate_resident(w, alloc);
+        (void)mems;
+        auto provider = fx.make_provider();
+        provider->configure_pack(moe_otd::PackMode::require, fx.pack_dir, fx.layouts);
+        provider->bind(w);
+
+        moe_otd::reset_path_b_harness_counters();
+        const auto before_cold = perf->snapshot();
+        const auto t_cold = std::chrono::steady_clock::now();
+        provider->acquire_one(3, get_test_stream());  // cold miss -> fill
+        const auto t_hot = std::chrono::steady_clock::now();
+        const auto after_cold = perf->snapshot();
+        provider->acquire_one(3, get_test_stream());  // warm hit
+        const auto t_hit = std::chrono::steady_clock::now();
+        const auto after_hit = perf->snapshot();
+
+        auto delta = [](const OtdPerfSnapshot& a, const OtdPerfSnapshot& b) {
+            OtdPerfSnapshot d;
+            d.gpu_hits = b.gpu_hits - a.gpu_hits;
+            d.gpu_misses = b.gpu_misses - a.gpu_misses;
+            d.evictions = b.evictions - a.evictions;
+            d.disk_io_ns = b.disk_io_ns - a.disk_io_ns;
+            d.disk_read_bytes = b.disk_read_bytes - a.disk_read_bytes;
+            d.disk_reads = b.disk_reads - a.disk_reads;
+            d.transpose_ns = b.transpose_ns - a.transpose_ns;
+            d.gpu_copy_ns = b.gpu_copy_ns - a.gpu_copy_ns;
+            d.tensor_load_count = b.tensor_load_count - a.tensor_load_count;
+            d.expert_loads = b.expert_loads - a.expert_loads;
+            d.pack_verify_ns = b.pack_verify_ns - a.pack_verify_ns;
+            d.pack_verified_records = b.pack_verified_records - a.pack_verified_records;
+            d.pack_verify_failures = b.pack_verify_failures - a.pack_verify_failures;
+            return d;
+        };
+
+        struct MissStats {
+            OtdPerfSnapshot cold_delta{};
+            OtdPerfSnapshot hit_delta{};
+            uint64_t scatter_entries = 0;
+            uint64_t fence_calls = 0;
+            uint64_t cold_ns = 0;
+            uint64_t hit_ns = 0;
+        };
+        MissStats s;
+        s.cold_delta = delta(before_cold, after_cold);
+        s.hit_delta = delta(after_cold, after_hit);
+        s.scatter_entries = moe_otd::path_b_scatter_entries();
+        s.fence_calls = moe_otd::path_b_fence_calls();
+        s.cold_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t_hot - t_cold).count());
+        s.hit_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t_hit - t_hot).count());
+        std::cout << "[U2-G02-" << tag << "] cold: expert_loads=" << s.cold_delta.expert_loads
+                  << " disk_reads=" << s.cold_delta.disk_reads << " disk_read_bytes=" << s.cold_delta.disk_read_bytes
+                  << " disk_io_ns=" << s.cold_delta.disk_io_ns << " verify_ns=" << s.cold_delta.pack_verify_ns
+                  << " verified_records=" << s.cold_delta.pack_verified_records
+                  << " copy_ns=" << s.cold_delta.gpu_copy_ns << " cold_ns=" << s.cold_ns << std::endl;
+        std::cout << "[U2-G02-" << tag << "] hit:  expert_loads=" << s.hit_delta.expert_loads
+                  << " disk_reads=" << s.hit_delta.disk_reads << " hit_ns=" << s.hit_ns << std::endl;
+        return s;
+    };
+
+    // Path B (flag on): usm_host residents, CPU scatter + fence.
+    {
+        EnvVarGuard on("OTD_RESIDENT_USM_HOST", "1");
+        EXPECT_TRUE(moe_otd::otd_resident_usm_host_enabled());
+        cldnn::moe_weights b_w;
+        auto s = record_miss(b_w, allocation_type::usm_host, "PATH_B");
+        EXPECT_EQ(s.cold_delta.expert_loads, 1u);
+        EXPECT_EQ(s.cold_delta.disk_reads, 1u);
+        EXPECT_GT(s.cold_delta.disk_read_bytes, 0u);
+        EXPECT_EQ(s.cold_delta.pack_verified_records, 1u);
+        EXPECT_EQ(s.cold_delta.pack_verify_failures, 0u);
+        EXPECT_EQ(s.scatter_entries, 1u);
+        EXPECT_EQ(s.fence_calls, 1u);
+        EXPECT_EQ(s.hit_delta.expert_loads, 0u);
+        EXPECT_EQ(s.hit_delta.disk_reads, 0u);
+    }
+
+    // Path A reference (default): usm_device residents via copy_from.
+    {
+        EnvVarGuard clear("OTD_RESIDENT_USM_HOST", "");
+        cldnn::moe_weights a_w;
+        auto s = record_miss(a_w, allocation_type::usm_device, "PATH_A");
+        EXPECT_EQ(s.cold_delta.expert_loads, 1u);
+        EXPECT_EQ(s.cold_delta.disk_reads, 1u);
+        EXPECT_GT(s.cold_delta.disk_read_bytes, 0u);
+        EXPECT_EQ(s.cold_delta.pack_verified_records, 1u);
+        EXPECT_EQ(s.hit_delta.disk_reads, 0u);
+        std::cout << "[U2-G02-WARN] single cold miss only; no bandwidth or copy win claim" << std::endl;
+    }
+}
+
+// U2-G03 (concurrent miss + eviction under stream): NOT_RUN — the short matrix has no lease-rule or
+// stream-lease harness; a real soak/concurrency rig is explicitly out of scope for this bounded run.
+TEST(moe_otd_uma02, U2_G03_concurrent_miss_eviction_under_stream) {
+    GTEST_SKIP() << "NOT_RUN: no lease-rule / concurrent-miss under-stream harness exists in the short matrix; "
+                    "needs a dedicated lightweight soak design (UMA-02-PLAN section 3.5)";
 }
