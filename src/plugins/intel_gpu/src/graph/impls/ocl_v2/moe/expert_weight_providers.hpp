@@ -112,6 +112,8 @@ private:
     moe_otd::ParallelWeightReader _weight_reader;
     std::optional<moe_otd::PackLayout> _pack;
     std::unique_ptr<moe_otd::ParallelWeightReader> _pack_reader;
+    // Content-keyed file name only, so diagnostics carry no machine-specific directory.
+    std::string _pack_name;
     std::vector<uint8_t> _pack_staging;
     cldnn::moe_weights* _resident = nullptr;
     bool _bound = false;
