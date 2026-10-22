@@ -5,6 +5,7 @@
 #pragma once
 #include <list>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -13,15 +14,28 @@ namespace ov::intel_gpu::ocl::moe {
 
 class LRUCache {
 public:
+    struct Lookup {
+        size_t slot = 0;
+        bool hit = false;
+        // Expert whose slot was recycled to make room, if any.
+        std::optional<size_t> evicted;
+    };
+
     explicit LRUCache(size_t max_total_experts);
 
     std::pair<size_t, bool> get_lru_item(size_t expert);
+    Lookup lookup(size_t expert);
 
     void evict_one();
 
     size_t size() const {
         std::lock_guard<std::mutex> lock(m_mutex);
         return m_total_experts;
+    }
+
+    size_t evictions() const {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_evictions;
     }
 
     void set_filled(size_t lru_expert_no) {
@@ -62,6 +76,7 @@ private:
     size_t m_max_total_experts;
     size_t m_total_experts;
     size_t m_to_filled_lru_expert_no;
+    size_t m_evictions = 0;
 
     std::list<Node> m_list;
     std::vector<bool> m_filled_list;
@@ -69,7 +84,7 @@ private:
     mutable std::mutex m_mutex;
 
     void move_to_end(std::list<Node>::iterator it);
-    void evict_one_unlocked();
+    std::optional<size_t> evict_one_unlocked();
 };
 
 }  // namespace ov::intel_gpu::ocl::moe

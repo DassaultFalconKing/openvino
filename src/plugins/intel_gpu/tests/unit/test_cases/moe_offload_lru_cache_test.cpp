@@ -247,6 +247,63 @@ TEST(moe_lru_cache, evict_on_empty_is_safe) {
 }
 
 // --------------------------------------------------
+// lookup(): eviction reporting used by OTD tracing
+// --------------------------------------------------
+
+TEST(moe_lru_cache, lookup_matches_get_lru_item_and_reports_eviction) {
+    LRUCache cache(2);
+
+    auto a = cache.lookup(10);
+    ASSERT_EQ(a.slot, 0U);
+    ASSERT_FALSE(a.hit);
+    ASSERT_FALSE(a.evicted.has_value());
+    cache.set_filled(a.slot);
+
+    auto b = cache.lookup(11);
+    ASSERT_EQ(b.slot, 1U);
+    ASSERT_FALSE(b.evicted.has_value());
+    cache.set_filled(b.slot);
+
+    auto hit = cache.lookup(10);  // LRU order: 11, 10
+    ASSERT_TRUE(hit.hit);
+    ASSERT_EQ(hit.slot, 0U);
+    ASSERT_FALSE(hit.evicted.has_value());
+
+    auto c = cache.lookup(12);  // evicts 11, reuses slot 1
+    ASSERT_FALSE(c.hit);
+    ASSERT_EQ(c.slot, 1U);
+    ASSERT_EQ(c.evicted, std::optional<size_t>(11));
+    ASSERT_EQ(cache.evictions(), 1U);
+}
+
+TEST(moe_lru_cache, evictions_counter_includes_explicit_evict) {
+    LRUCache cache(2);
+    cache.get_lru_item(0);
+    cache.get_lru_item(1);
+    cache.get_lru_item(2);
+    ASSERT_EQ(cache.evictions(), 1U);
+    cache.evict_one();
+    ASSERT_EQ(cache.evictions(), 2U);
+    cache.evict_one();
+    cache.evict_one();  // empty: not counted
+    ASSERT_EQ(cache.evictions(), 3U);
+}
+
+// Known latent defect, kept disabled: after an explicit evict_one() the next insert takes
+// slot m_total_experts instead of the freed slot, so two resident experts can share a slot.
+// evict_one() has no production caller today; enable this once the slot free-list is fixed.
+TEST(moe_lru_cache, DISABLED_explicit_evict_then_insert_keeps_slots_unique) {
+    LRUCache cache(3);
+    cache.get_lru_item(0);  // slot 0
+    cache.get_lru_item(1);  // slot 1
+    cache.get_lru_item(2);  // slot 2
+    cache.evict_one();      // frees slot 0 (expert 0)
+    auto [slot, hit] = cache.get_lru_item(3);
+    ASSERT_FALSE(hit);
+    ASSERT_EQ(slot, 0U);
+}
+
+// --------------------------------------------------
 // Capacity = 1 edge case
 // --------------------------------------------------
 

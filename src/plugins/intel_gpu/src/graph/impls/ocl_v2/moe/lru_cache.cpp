@@ -17,12 +17,13 @@ void LRUCache::move_to_end(std::list<Node>::iterator it) {
     m_list.splice(m_list.end(), m_list, it);
 }
 
-void LRUCache::evict_one_unlocked() {
+std::optional<size_t> LRUCache::evict_one_unlocked() {
     if (m_list.empty()) {
-        return;
+        return std::nullopt;
     }
 
     auto& oldest = m_list.front();
+    const size_t evicted = oldest.expert;
 
     m_filled_list[oldest.lru_expert_no] = false;
     m_to_filled_lru_expert_no = oldest.lru_expert_no;
@@ -30,6 +31,8 @@ void LRUCache::evict_one_unlocked() {
     m_map.erase(key);
     m_list.pop_front();
     --m_total_experts;
+    ++m_evictions;
+    return evicted;
 }
 
 void LRUCache::evict_one() {
@@ -38,14 +41,20 @@ void LRUCache::evict_one() {
 }
 
 std::pair<size_t, bool> LRUCache::get_lru_item(size_t expert) {
+    const auto result = lookup(expert);
+    return {result.slot, result.hit};
+}
+
+LRUCache::Lookup LRUCache::lookup(size_t expert) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
+    Lookup result;
     Key key{expert};
     auto it = m_map.find(key);
     if (it == m_map.end()) {
         size_t to_filled_no = 0;
         if (m_total_experts >= m_max_total_experts) {
-            evict_one_unlocked();
+            result.evicted = evict_one_unlocked();
             to_filled_no = m_to_filled_lru_expert_no;
         } else {
             to_filled_no = m_total_experts;
@@ -54,11 +63,14 @@ std::pair<size_t, bool> LRUCache::get_lru_item(size_t expert) {
         auto new_it = std::prev(m_list.end());
         m_map[key] = new_it;
         ++m_total_experts;
-        return {to_filled_no, false};
+        result.slot = to_filled_no;
+        result.hit = false;
+        return result;
     }
     move_to_end(it->second);
-    const bool is_hit = m_filled_list[it->second->lru_expert_no];
-    return {it->second->lru_expert_no, is_hit};
+    result.slot = it->second->lru_expert_no;
+    result.hit = m_filled_list[it->second->lru_expert_no];
+    return result;
 }
 
 }  // namespace ov::intel_gpu::ocl::moe
