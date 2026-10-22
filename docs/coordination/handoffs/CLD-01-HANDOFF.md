@@ -10,7 +10,8 @@
 - OVMS fork `DassaultFalconKing/gemmamonster_model_server_OVMS` integration `integration/qwm01-otd-pack-20261022` @ `746dc833dc3bcccf64fabdb469feda9260582bae` (not modified).
 - Golden `c6-head-mainline-20261020` @ `ba6ec792c3121850fea167fa7d7e190b25fcdc76` (not modified).
 - Other GPU observability branch `research/ov-gpu-otd-observability-2026` not mixed in.
-- Source changes: `src/plugins/intel_gpu/src/graph/impls/ocl_v2/moe/moe_otd_pack.hpp`, `.cpp`, `moe_otd_runtime.cpp`; unit fixture `src/plugins/intel_gpu/tests/unit/test_cases/moe_offload_pack_test.cpp`.
+- Source changes: `src/plugins/intel_gpu/src/graph/impls/ocl_v2/moe/moe_otd_pack.hpp`, `.cpp`, `moe_otd_runtime.hpp`, `moe_otd_runtime.cpp`, `expert_weight_providers.hpp`, `expert_weight_providers.cpp`; unit fixtures `src/plugins/intel_gpu/tests/unit/test_cases/moe_offload_pack_test.cpp`, `moe_offload_weight_provider_test.cpp`.
+- Commits: `2ed011fc` (initial integrity patch), `8e1bb766` (docs), then a follow-up hardening commit (pre-copy validation, `PackIntegrityError`, verify counters, provider-level tests); read the exact follow-up SHA from `git log` on the PR branch.
 - Final documentation commit/head: inspect PR branch and `git rev-parse HEAD` (the handoff itself must not self-reference a future commit).
 
 ## 2. What changed / algorithm / non-goals
@@ -23,6 +24,18 @@
 - `PackMode::require`: missing/invalid metadata fails at configure; payload/checksum corruption on miss raises an exception, with no weight-file fallback or successful slot fill.
 - `PackMode::use`: existing startup fallback for an absent/unopenable pack is unchanged. A pack that opens but later fails a read intentionally throws rather than silently switching sources. Confirm product policy locally before integrating.
 
+### Follow-up hardening commit (on top of `8e1bb766`)
+
+- **No partial slot mutation.** `fill_weights_from_pack` previously asserted each tensor's resident size *inside* the copy loop, so a mismatch on tensor `t` could leave tensors `0..t-1` of the slot overwritten with the new expert while the rest still held the evicted one. All size and slot-range checks now run before the read; `copy_from` runs only after every check and the checksum have passed.
+- **`PackIntegrityError`** (derives from `std::runtime_error`) is thrown by `read_verified_record` on mismatch, so integrity rejections are distinguishable from I/O errors. The message carries expert ID, physical record position and payload size only.
+- **Provider diagnostic.** `OffloadExpertWeightProvider::acquire_slot` rethrows it as `ov::Exception` with the content-keyed pack *file name* (no directory, no machine path), expert and slot, and states that resident memory was not modified. The LRU slot stays `filled=false`, so a retry re-reads and fails again; it is never served as a stale hit.
+- **Checksum cost is now counted** under `MOE_OTD_PERF_LOG`: new `pack_verify_ns`, `pack_verified_records`, `pack_verify_failures` in `OtdPerfCounters`/`OtdPerfSnapshot`, printed as a third `[OTD_PERF]` line. `ExpertLoadStats` and the `MOE_OTD_TRACE` format are unchanged (CLD-03 owns trace).
+- **Provider-level tests** in `moe_offload_weight_provider_test.cpp` drive the real `configure_pack -> acquire_one -> fill_weights_from_pack` path with a tiny 4-expert layer (u8 weights, f16 scales, u8 zero points) and real device buffers pre-filled with a sentinel.
+
+### Per-miss checksum cost (estimate, not measured)
+
+FNV-1a-64 is a serial xor+multiply chain, roughly 4 cycles/byte, i.e. about 0.8 ns/byte (~1.2 GB/s) on one ~4.8 GHz core. For a record of `P` payload bytes the added CPU time per miss is about `0.8 ns * P`: ~1.7 ms for a 2 MiB expert, against ~0.3-0.4 ms to read the same 2 MiB sequentially from a fast NVMe drive. **On a miss-heavy workload the checksum can cost several times the disk read.** It runs on the calling thread, adds no heap allocation (it hashes the existing staging buffer) and no extra I/O. Startup cost is O(num_expert) for the checksum table (8 bytes per expert). Reviewer 4 must measure `avg_pack_verify_us` against `avg_disk_io_us`. If the cost is unacceptable, options needing a separate decision are: a v2 pack with a hardware-accelerated checksum (CRC32C) or a vectorized hash, or verify-once-per-process (weaker: does not catch bytes that change between reads). Neither is implemented here.
+
 ## 3. Threat model / invariants / limitations
 
 1. Detect accidental bit flips and metadata corruption, including re-sealed non-canonical header offsets and wrong placement index. FNV-1a-64 **is not authenticated / cryptographically collision-resistant**. A malicious actor able to rewrite content and checksums together is outside the integrity guarantee.
@@ -30,11 +43,28 @@
 3. Exactly one file-reader invocation per miss, no new disk payload read, no new model tier or hot-path heap allocation other than possible existing staging resize.
 4. `LRUCache::lookup` reserves an unfilled slot before read; `set_filled` is only reached after successful verification and GPU copying. On exception do not resume using stale slot. Independently review repeated failure/retry semantics, including concurrent requests.
 5. No lifetime pin for the pack between `open` and `ParallelWeightReader`; concurrent replacement/mutation, reader handle semantics and file swap are separate CLD-02 questions.
-6. FNV CPU time is **not** included in the GPU-copy nor physical-disk counters, nor separately exposed in current telemetry. Compare wall time and CPU use; never call the checksum free.
+6. FNV CPU time is excluded from the read and GPU-copy timings and reported separately as `pack_verify_ns` (only with `MOE_OTD_PERF_LOG`). It is still not in `MOE_OTD_TRACE`. Compare wall time and CPU use; never call the checksum free.
+9. Thread safety is unchanged: the provider's single `_pack_staging` buffer already implies that one provider (one MoE layer) is not filled concurrently. Perf counters are relaxed atomics.
 7. Planner assumes the source model specification is trusted; very large sparse files combined with attacker-controlled spec can still cause memory pressure. Header-controlled count is checked against expected source identity before allocation.
 8. Size and offsets are bounded by `std::streamoff` representability. Original v1 records and tensor bytes remain byte-compatible.
 
-## 4. Local build/unit verification (all NOT RUN in cloud)
+## 4. Local build/unit verification
+
+### Evidence actually collected by the author
+
+`STATIC_CHECK_PASS` (syntax only, MSVC 14.44.35207 `/Zs`, Windows host, no objects, no link, no GPU): each changed TU was compiled with the exact flags of an existing cohort build's compile database, with the source path swapped to this branch. The include trace confirmed the branch's `moe_otd_pack.hpp` was used.
+
+| TU | exit |
+|---|---|
+| `moe_otd_pack.cpp` | 0 |
+| `moe_otd_runtime.cpp` | 0 |
+| `expert_weight_providers.cpp` | 0 |
+| `tests/unit/test_cases/moe_offload_pack_test.cpp` | 0 |
+| `tests/unit/test_cases/moe_offload_weight_provider_test.cpp` | 0 |
+
+The two test TUs used an approximated include set (gtest, gmock, `tests/unit`, graph include dirs), because unit tests were not configured in that build. Their only warnings (C4244 in `test_utils.h:613` and `xutility`) also appear on the unmodified base file. This is **not** `BUILD PASS`: no linking, template instantiation in other TUs, GCC/Clang or Linux checks. `UNIT` tests: `NOT_RUN`.
+
+### Remaining local verification (NOT RUN by the author)
 
 Check out this **specific PR branch**; verify `git status --short` clean, expected source locks and `git diff 479219245f6f10b670367ad35af16513d72d2091...HEAD --stat`.
 
@@ -77,8 +107,12 @@ Linux/P720 can check C++ and filesystem portability only; **do not** claim equiv
 
 - Baseline tests: `parse_mode`, `build_open_and_records_round_trip`, `corrupt_record_is_detected_and_not_reused`, `corrupt_header_or_truncation_fails_open_and_triggers_rebuild`, placement permutation and missing/cross-model pack.
 - Added tests: `serving_read_validates_logical_expert_before_gpu_copy` (shared read helper, first/last expert, rearranged placement, one reader call); `serving_read_rejects_corrupt_checksum_and_truncated_record`; `resealed_noncanonical_offsets_and_sizes_are_rejected`; `invalid_placement_table_and_overflowed_plan_fail_closed`.
-- Explicitly verify a corrupt record never passes into **any** GPU `copy_from`. Unit seam alone is not a live GPU receipt.
-- Additional desired local tests: `configure_pack(require)` missing/checksum-invalid file and `use` metadata fallback on the real provider; single miss after on-disk bitflip, repeated miss, parallel inference errors, cross-model checkpoint source key. A runtime trace of failure with zero successful slot fill is needed.
+- Added provider tests (`moe_expert_weight_provider.*`, need a GPU device for `get_test_stream()` and device buffers):
+  - `pack_require_fails_closed_on_unusable_pack_and_use_falls_back`: missing pack, corrupted header, wrong directory under `require` throw `ov::Exception`; missing pack under `use` falls back (`uses_pack()==false`).
+  - `pack_require_serves_verified_record_into_slot`: a valid record lands byte-exact in its slot; every other byte of every resident buffer keeps the sentinel.
+  - `pack_require_rejects_corrupt_record_without_touching_device`: a flipped byte in the **last** tensor (`down_z`) of expert 1 throws, all nine resident buffers remain entirely sentinel, the slot is not marked filled, a retry throws again, and expert 0 still serves.
+  - `pack_use_mode_does_not_silently_serve_corrupt_open_pack`: documents the chosen `use` policy (no silent source switch once a pack is open).
+- Still desired locally: parallel inference error propagation, cross-model checkpoint source key through the provider, and a runtime trace of a failure with zero successful slot fill.
 - Repeat on Windows and Linux; record `PASS/FAIL/SKIP` per case, never infer from source inspection.
 
 ## 6. GPU correctness / performance after operator authorizes compute
