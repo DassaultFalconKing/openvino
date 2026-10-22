@@ -1049,7 +1049,8 @@ public:
             _weight_provider = std::make_shared<OffloadExpertWeightProvider>(cur_moe->_otd.lru_expert_num,
                                                                              cur_moe->_config,
                                                                              cur_moe->_otd.weight_bin_offsets,
-                                                                             cur_moe->_otd.weights_path);
+                                                                             cur_moe->_otd.weights_path,
+                                                                             cur_moe->id);
         } else {
             _weight_provider = std::make_shared<ResidentExpertWeightProvider>();
         }
@@ -1329,7 +1330,8 @@ public:
             _weight_provider = std::make_shared<OffloadExpertWeightProvider>(cur_moe->_otd.lru_expert_num,
                                                                              cur_moe->_config,
                                                                              cur_moe->_otd.weight_bin_offsets,
-                                                                             cur_moe->_otd.weights_path);
+                                                                             cur_moe->_otd.weights_path,
+                                                                             cur_moe->id);
         } else {
             _weight_provider = std::make_shared<ResidentExpertWeightProvider>();
         }

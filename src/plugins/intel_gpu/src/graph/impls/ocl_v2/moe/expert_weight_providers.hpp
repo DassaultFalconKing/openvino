@@ -60,10 +60,12 @@ public:
 // at construction from graph-build time information.
 class OffloadExpertWeightProvider : public IExpertWeightProvider {
 public:
+    // trace_layer_name only feeds a hashed layer key in MOE_OTD_TRACE output.
     OffloadExpertWeightProvider(size_t capacity,
                                 const cldnn::MOECompressed::Config& config,
                                 std::vector<size_t> weight_bin_offsets,
-                                std::filesystem::path weights_path);
+                                std::filesystem::path weights_path,
+                                const std::string& trace_layer_name = {});
 
     size_t resident_capacity() const override {
         return _capacity;
@@ -90,7 +92,10 @@ public:
     }
 
 private:
+    LRUCache::Lookup acquire_slot(uint32_t expert, cldnn::stream& stream, uint64_t trace_call);
+
     size_t _capacity = 0;
+    uint32_t _trace_layer = 0;
     cldnn::MOECompressed::Config _config{};
     std::vector<size_t> _weight_bin_offsets;
     std::filesystem::path _weights_path;

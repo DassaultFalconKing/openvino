@@ -5,6 +5,7 @@
 #include "expert_weight_providers.hpp"
 
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 // moe_otd_runtime.hpp is not self-contained: it relies on cldnn graph/runtime
@@ -27,13 +28,18 @@ size_t ResidentExpertWeightProvider::acquire_one(uint32_t expert, cldnn::stream&
 OffloadExpertWeightProvider::OffloadExpertWeightProvider(size_t capacity,
                                                          const cldnn::MOECompressed::Config& config,
                                                          std::vector<size_t> weight_bin_offsets,
-                                                         std::filesystem::path weights_path)
+                                                         std::filesystem::path weights_path,
+                                                         const std::string& trace_layer_name)
     : _capacity(capacity),
       _config(config),
       _weight_bin_offsets(std::move(weight_bin_offsets)),
       _weights_path(std::move(weights_path)),
       _cache(std::make_shared<LRUCache>(capacity)),
-      _weight_reader(_weights_path) {}
+      _weight_reader(_weights_path) {
+    if (auto* trace = moe_otd::get_trace_writer()) {
+        _trace_layer = trace->register_layer(trace_layer_name, _weights_path.generic_string(), _capacity, _config.num_expert, _config.top_k);
+    }
+}
 
 void OffloadExpertWeightProvider::bind(cldnn::moe_weights& resident) {
     _resident = &resident;
@@ -57,6 +63,35 @@ void OffloadExpertWeightProvider::fill_routed_weight_views(cldnn::moe_weights& /
     views.zp[2] = _resident->down_z;
 }
 
+LRUCache::Lookup OffloadExpertWeightProvider::acquire_slot(uint32_t expert, cldnn::stream& stream, uint64_t trace_call) {
+    auto* perf = moe_otd::get_perf_counters();
+    auto* trace = moe_otd::get_trace_writer();
+
+    const auto item = _cache->lookup(expert);
+    moe_otd::ExpertLoadStats load;
+
+    if (item.hit) {
+        if (perf) {
+            perf->gpu_hits.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else {
+        if (perf) {
+            perf->gpu_misses.fetch_add(1, std::memory_order_relaxed);
+            if (item.evicted) {
+                perf->evictions.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        OPENVINO_ASSERT(_resident != nullptr, "OffloadExpertWeightProvider: resident buffers not bound");
+        moe_otd::fill_weights_memory(stream, _config, _weight_bin_offsets, _weight_reader, *_resident, {expert}, {item.slot}, trace ? &load : nullptr);
+        _cache->set_filled(item.slot);
+    }
+
+    if (trace) {
+        trace->expert(trace_call, _trace_layer, expert, item.slot, item.hit, item.evicted, load);
+    }
+    return item;
+}
+
 std::optional<ExpertSlotLease> OffloadExpertWeightProvider::try_acquire_simultaneous(const std::vector<uint32_t>& experts, cldnn::stream& stream) {
     // Deduplicate to check capacity
     std::unordered_map<uint32_t, size_t> expert_to_slot;
@@ -64,7 +99,21 @@ std::optional<ExpertSlotLease> OffloadExpertWeightProvider::try_acquire_simultan
 
     std::vector<size_t> slots(experts.size());
     auto* perf = moe_otd::get_perf_counters();
+    auto* trace = moe_otd::get_trace_writer();
 
+    uint64_t trace_call = 0;
+    if (trace) {
+        std::vector<uint32_t> unique_experts;
+        std::unordered_set<uint32_t> seen;
+        for (uint32_t expert : experts) {
+            if (seen.insert(expert).second) {
+                unique_experts.push_back(expert);
+            }
+        }
+        trace_call = trace->begin_call(_trace_layer, moe_otd::AcquireKind::simultaneous, experts.size(), unique_experts);
+    }
+
+    uint64_t loads_in_call = 0;
     for (size_t i = 0; i < experts.size(); i++) {
         const uint32_t expert = experts[i];
         auto it = expert_to_slot.find(expert);
@@ -75,51 +124,39 @@ std::optional<ExpertSlotLease> OffloadExpertWeightProvider::try_acquire_simultan
 
         // Check if we would exceed capacity
         if (expert_to_slot.size() >= _capacity) {
+            if (perf) {
+                perf->overflow_partial_loads.fetch_add(loads_in_call, std::memory_order_relaxed);
+            }
+            if (trace) {
+                trace->end_call(trace_call, true);
+            }
             return std::nullopt;
         }
 
-        const auto item = _cache->get_lru_item(expert);
-        const auto slot = item.first;
-
-        if (item.second) {
-            if (perf) {
-                perf->gpu_hits.fetch_add(1, std::memory_order_relaxed);
-            }
-        } else {
-            if (perf) {
-                perf->gpu_misses.fetch_add(1, std::memory_order_relaxed);
-            }
-            OPENVINO_ASSERT(_resident != nullptr, "OffloadExpertWeightProvider: resident buffers not bound");
-            moe_otd::fill_weights_memory(stream, _config, _weight_bin_offsets, _weight_reader, *_resident, {expert}, {slot});
-            _cache->set_filled(slot);
+        const auto item = acquire_slot(expert, stream, trace_call);
+        if (!item.hit) {
+            loads_in_call++;
         }
-
-        expert_to_slot.emplace(expert, slot);
-        slots[i] = slot;
+        expert_to_slot.emplace(expert, item.slot);
+        slots[i] = item.slot;
     }
 
+    if (trace) {
+        trace->end_call(trace_call, false);
+    }
     return slots;
 }
 
 size_t OffloadExpertWeightProvider::acquire_one(uint32_t expert, cldnn::stream& stream) {
-    auto* perf = moe_otd::get_perf_counters();
-
-    const auto item = _cache->get_lru_item(expert);
-    const auto slot = item.first;
-
-    if (item.second) {
-        if (perf) {
-            perf->gpu_hits.fetch_add(1, std::memory_order_relaxed);
-        }
-    } else {
-        if (perf) {
-            perf->gpu_misses.fetch_add(1, std::memory_order_relaxed);
-        }
-        OPENVINO_ASSERT(_resident != nullptr, "OffloadExpertWeightProvider: resident buffers not bound");
-        moe_otd::fill_weights_memory(stream, _config, _weight_bin_offsets, _weight_reader, *_resident, {expert}, {slot});
-        _cache->set_filled(slot);
+    auto* trace = moe_otd::get_trace_writer();
+    uint64_t trace_call = 0;
+    if (trace) {
+        trace_call = trace->begin_call(_trace_layer, moe_otd::AcquireKind::one, 1, {expert});
     }
-
+    const auto slot = acquire_slot(expert, stream, trace_call).slot;
+    if (trace) {
+        trace->end_call(trace_call, false);
+    }
     return slot;
 }
 
