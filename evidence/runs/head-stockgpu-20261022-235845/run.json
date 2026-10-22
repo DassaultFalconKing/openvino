@@ -1,0 +1,17 @@
+{
+    "tag":  "head+stockgpu",
+    "runtime":  "C:\\gm\\orchestration\\decode-regression-20261022\\rt-head+stockgpu",
+    "pid":  26412,
+    "free_mib":  19415,
+    "extra_args":  [
+
+                   ],
+    "env":  {
+
+            },
+    "plugin_config":  "{\"OFFLOAD_RATIO\":20,\"WEIGHTS_PATH\":\"C:/Users/testc/qwen36-35b-a3b-baseline/models/Qwen3.6-35B-A3B-int4-ov/openvino_language_model.bin\",\"CACHE_DIR\":\"C:/gm/orchestration/decode-regression-20261022/cache/21A2FD9F5D85\"}",
+    "ovms_sha":  "A3086984C50E0D2B70906D511A538212C8672F53A3E54A936C4FD60DD1E8673C",
+    "gpu_plugin_sha":  "21A2FD9F5D856C297416059325832F0F902C84A4E78B840F859CA508F5AEA66D",
+    "openvino_sha":  "13A3C5A91BD6AA45D29271E08613056F09F0F7DD067250C2BAC6B02C96597C8F",
+    "started_at":  "2026-10-22T21:58:46.0698648Z"
+}

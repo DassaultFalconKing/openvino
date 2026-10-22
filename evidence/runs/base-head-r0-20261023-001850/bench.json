@@ -1,0 +1,42 @@
+{
+  "port": 9188,
+  "max_tokens": 128,
+  "prompt": "Explain, step by step, how a least-recently-used cache works, then write a short Python class implementing it with get and put methods and O(1) operations. Finish with three edge cases to test.",
+  "runs": [
+    {
+      "ttft_s": 0.8506878999760374,
+      "total_s": 15.981650699977763,
+      "content_chunks": 108,
+      "completion_tokens": 128,
+      "prompt_tokens": 55,
+      "decode_window_s": 15.130878299998585,
+      "decode_tok_per_s_after_first": 8.393432124823308,
+      "finish_reason": "length",
+      "text_head": "Here's a thinking process:\n\n1.  **Understand User Request:**\n   - **Topic:** Least Recently Used (LRU) Cache\n   - **Requirements:**\n     - Explain step-by-step how it works\n     - Write a short Python"
+    },
+    {
+      "ttft_s": 0.7532524000271223,
+      "total_s": 15.940732199989725,
+      "content_chunks": 108,
+      "completion_tokens": 128,
+      "prompt_tokens": 55,
+      "decode_window_s": 15.187278700002935,
+      "decode_tok_per_s_after_first": 8.362261765827439,
+      "finish_reason": "length",
+      "text_head": "Here's a thinking process:\n\n1.  **Understand User Request:**\n   - **Topic:** Least Recently Used (LRU) Cache\n   - **Requirements:**\n     - Explain step-by-step how it works\n     - Write a short Python"
+    }
+  ],
+  "ready": true,
+  "ready_wait_s": 5.519298791885376,
+  "warmup": {
+    "ttft_s": 18.349006399977952,
+    "total_s": 39.7502480999683,
+    "content_chunks": 108,
+    "completion_tokens": 128,
+    "prompt_tokens": 55,
+    "decode_window_s": 21.401126499986276,
+    "decode_tok_per_s_after_first": 5.934267058328983,
+    "finish_reason": "length",
+    "text_head": "Here's a thinking process:\n\n1.  **Understand User Request:**\n   - **Topic:** Least Recently Used (LRU) Cache\n   - **Requirements:**\n     - Explain step-by-step how it works\n     - Write a short Python"
+  }
+}

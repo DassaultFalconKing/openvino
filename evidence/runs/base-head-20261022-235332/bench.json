@@ -1,0 +1,53 @@
+{
+  "port": 9188,
+  "max_tokens": 256,
+  "prompt": "Explain, step by step, how a least-recently-used cache works, then write a short Python class implementing it with get and put methods and O(1) operations. Finish with three edge cases to test.",
+  "runs": [
+    {
+      "ttft_s": 1.0939668000210077,
+      "total_s": 32.48524260002887,
+      "content_chunks": 226,
+      "completion_tokens": 256,
+      "prompt_tokens": 55,
+      "decode_window_s": 31.39119130000472,
+      "decode_tok_per_s_after_first": 8.123297952058342,
+      "finish_reason": "length",
+      "text_head": "Here's a thinking process:\n\n1.  **Understand User Request:**\n   - **Topic:** Least Recently Used (LRU) Cache\n   - **Requirements:**\n     - Explain step-by-step how it works\n     - Write a short Python"
+    },
+    {
+      "ttft_s": 0.785489099973347,
+      "total_s": 31.592121399997268,
+      "content_chunks": 226,
+      "completion_tokens": 256,
+      "prompt_tokens": 55,
+      "decode_window_s": 30.806494000018574,
+      "decode_tok_per_s_after_first": 8.277475521876857,
+      "finish_reason": "length",
+      "text_head": "Here's a thinking process:\n\n1.  **Understand User Request:**\n   - **Topic:** Least Recently Used (LRU) Cache\n   - **Requirements:**\n     - Explain step-by-step how it works\n     - Write a short Python"
+    },
+    {
+      "ttft_s": 0.808676699991338,
+      "total_s": 31.602635300019756,
+      "content_chunks": 226,
+      "completion_tokens": 256,
+      "prompt_tokens": 55,
+      "decode_window_s": 30.79385249997722,
+      "decode_tok_per_s_after_first": 8.280873593201392,
+      "finish_reason": "length",
+      "text_head": "Here's a thinking process:\n\n1.  **Understand User Request:**\n   - **Topic:** Least Recently Used (LRU) Cache\n   - **Requirements:**\n     - Explain step-by-step how it works\n     - Write a short Python"
+    }
+  ],
+  "ready": true,
+  "ready_wait_s": 15.523920774459839,
+  "warmup": {
+    "ttft_s": 18.208328699984122,
+    "total_s": 57.991148000000976,
+    "content_chunks": 226,
+    "completion_tokens": 256,
+    "prompt_tokens": 55,
+    "decode_window_s": 39.782709099992644,
+    "decode_tok_per_s_after_first": 6.4098198883104,
+    "finish_reason": "length",
+    "text_head": "Here's a thinking process:\n\n1.  **Understand User Request:**\n   - **Topic:** Least Recently Used (LRU) Cache\n   - **Requirements:**\n     - Explain step-by-step how it works\n     - Write a short Python"
+  }
+}

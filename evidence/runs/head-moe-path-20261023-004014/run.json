@@ -1,0 +1,15 @@
+{
+  "tag": "head-moe-path",
+  "runtime": "C:\\gm\\otd-research\\runtime\\base",
+  "pid": 11580,
+  "free_mib": 18493,
+  "extra_args": [],
+  "env": {
+    "MOE_PATH_LOG": "1"
+  },
+  "plugin_config": "{\"OFFLOAD_RATIO\":0,\"WEIGHTS_PATH\":\"C:/Users/testc/qwen36-35b-a3b-baseline/models/Qwen3.6-35B-A3B-int4-ov/openvino_language_model.bin\",\"CACHE_DIR\":\"C:/gm/orchestration/decode-regression-20261022/cache/5619B0963061\"}",
+  "ovms_sha": "A3086984C50E0D2B70906D511A538212C8672F53A3E54A936C4FD60DD1E8673C",
+  "gpu_plugin_sha": "5619B0963061485AB74446579B57912556FEF8F7FF19DC3CD2F887EDF8191CA8",
+  "openvino_sha": "13A3C5A91BD6AA45D29271E08613056F09F0F7DD067250C2BAC6B02C96597C8F",
+  "started_at": "2026-10-22T22:40:14.7603380Z"
+}

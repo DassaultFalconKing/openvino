@@ -1,0 +1,114 @@
+{
+  "cohort": "c6-head-20261019",
+  "state": "CANDIDATE_RUNTIME_ACCEPTANCE_PENDING",
+  "source_heads": {
+    "ovms": "ba6ec792c3121850fea167fa7d7e190b25fcdc76",
+    "openvino": "591ab0b517a7c5b3ff017db96d820d3a38cda5c9",
+    "genai": "2decb9ec4bea827e01db47524352ad72d23b33ab",
+    "tokenizers": "d73028e255ddc279483fbc6e8ea90dc802e820f5",
+    "xgrammar": "c77d5e0d62411d17d4cf55d280463eb5b3bec7ba",
+    "minja": "83eb074e42140b0d1194d1dd61f29c31e4515ee9"
+  },
+  "files": [
+    {
+      "file": "ovms.exe",
+      "sha256": "a3086984c50e0d2b70906d511a538212c8672f53a3e54a936c4fd60dd1e8673c"
+    },
+    {
+      "file": "git2.dll",
+      "sha256": "6ff4f8bc30ce885aa856e2a9b8bd632ea7ff97975d3afb31bcebed5bad3567e4"
+    },
+    {
+      "file": "libcurl-x64.dll",
+      "sha256": "f31fa58061e162ff4702b37224404df210346df6dff4a49e92d07b8dd5217334"
+    },
+    {
+      "file": "opencv_world4140.dll",
+      "sha256": "327357addf18e61d853e7f0d5095f8ec82e3aed0f5d4854d0c6e74ed7d128e4d"
+    },
+    {
+      "file": "openvino_genai.dll",
+      "sha256": "7892465a3bca67e103e26b198f47fb1d5c0a98fc2cc7cb4616ba0e8d5ad054da"
+    },
+    {
+      "file": "openvino_tokenizers.dll",
+      "sha256": "a7b4a454ccf9e242938e79038ec80b5ba8f07f1ed488138497e17c96f52b7f66"
+    },
+    {
+      "file": "tbb12.dll",
+      "sha256": "a7a236bb095ac33f463a996d16ad7f5ee6bb9046bc151c667c2340061e5fc348"
+    },
+    {
+      "file": "tbbbind_2_5.dll",
+      "sha256": "70225c2c43de3962bcc0dee8590a81317106ec1e4890e970fb107bfe1a6815cf"
+    },
+    {
+      "file": "tbbmalloc.dll",
+      "sha256": "c6cedc229cb19335391107a127fc18f98b400f793a4ff6b450f3af19d3c8d3ea"
+    },
+    {
+      "file": "tbbmalloc_proxy.dll",
+      "sha256": "d6fd7c5eed903da1b4892f76de902bd63f3266afba9c07263e5317c2a590de73"
+    },
+    {
+      "file": "openvino.dll",
+      "sha256": "13a3c5a91bd6aa45d29271e08613056f09f0f7dd067250c2bac6b02c96597c8f"
+    },
+    {
+      "file": "openvino_auto_batch_plugin.dll",
+      "sha256": "ec1fb6bd0c2c2db23ab83e527736ec02c231c13c5573794d66367a9e2a455634"
+    },
+    {
+      "file": "openvino_auto_plugin.dll",
+      "sha256": "9b109ef81a6664868fbe54b1b72d496ba43282a6ac7448279fc8ba05f97e71e2"
+    },
+    {
+      "file": "openvino_c.dll",
+      "sha256": "8d52da6538788a0928b72b74fefd73af04ff409387367ed8c33cefea25952663"
+    },
+    {
+      "file": "openvino_hetero_plugin.dll",
+      "sha256": "207c7708f3fdb24a4b0832e2aa2a34669eba26eab14fcd5efb156b7d9eb29d6c"
+    },
+    {
+      "file": "openvino_intel_cpu_plugin.dll",
+      "sha256": "0cf9706f38ad67535c09842b4678accd207c132364cfe63e5cbb2f2eaa5fda77"
+    },
+    {
+      "file": "openvino_intel_gpu_plugin.dll",
+      "sha256": "087492b551102c698980cdb771b65f12d8ffd5dbdbef422824151d3f2b39630d"
+    },
+    {
+      "file": "openvino_ir_frontend.dll",
+      "sha256": "f4db5c945ce4bbe055450b31d706dfc530f6fa79e9b8398c6832c2626ae192ef"
+    },
+    {
+      "file": "opencv_videoio_ffmpeg4140_64.dll",
+      "sha256": "131d7657a173f659de69e1e331916e4a9c0d8cf7bde7201a6988af6056b94853"
+    },
+    {
+      "file": "curl-ca-bundle.crt",
+      "sha256": "1fdcf2a55c9806c4c1e8391cb283871ee3b209d68a2879ce4c0898d949de2545"
+    },
+    {
+      "file": "licenses/openvino-LICENSE",
+      "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+    },
+    {
+      "file": "licenses/genai-LICENSE",
+      "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+    },
+    {
+      "file": "licenses/tokenizers-LICENSE",
+      "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+    },
+    {
+      "file": "licenses/minja-LICENSE",
+      "sha256": "6d30f4a7efcb6dd3e6d96e636dbd731a1fe064ee10943dc5876d9646c13b6e77"
+    },
+    {
+      "file": "licenses/xgrammar-LICENSE",
+      "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+    }
+  ]
+}

@@ -1,0 +1,134 @@
+[2026-10-22 23:56:43.442][5432][serving][info][pythoninterpretermodule.cpp:37] PythonInterpreterModule starting
+[2026-10-22 23:56:43.443][5432][serving][info][pythoninterpretermodule.cpp:40] Initializing python interpreter
+[2026-10-22 23:56:43.496][5432][serving][info][pythoninterpretermodule.cpp:59] PythonInterpreterModule started
+[2026-10-22 23:56:43.701][5432][modelmanager][info][modelmanager.cpp:169] Available devices for Open VINO: CPU, GPU, NPU
+[2026-10-22 23:56:43.707][5432][serving][info][capimodule.cpp:40] C-APIModule starting
+[2026-10-22 23:56:43.708][5432][serving][info][capimodule.cpp:42] C-APIModule started
+[2026-10-22 23:56:43.708][5432][serving][info][grpcservermodule.cpp:106] GRPCServerModule starting
+[2026-10-22 23:56:43.709][5432][serving][info][grpcservermodule.cpp:110] GRPCServerModule started
+[2026-10-22 23:56:43.709][5432][serving][info][grpcservermodule.cpp:111] Port was not set. GRPC server will not be started.
+[2026-10-22 23:56:43.709][5432][serving][info][httpservermodule.cpp:35] HTTPServerModule starting
+[2026-10-22 23:56:43.709][5432][serving][info][httpservermodule.cpp:39] Will start 8 REST workers
+[2026-10-22 23:56:43.709][21360][serving][info][drogon_http_server.cpp:157] Binding REST server to address: 127.0.0.1:9188
+[2026-10-22 23:56:43.760][5432][serving][info][drogon_http_server.cpp:187] REST server listening on port 9188 with 8 unary threads and 8 streaming threads
+[2026-10-22 23:56:43.760][5432][serving][info][http_server.cpp:238] API key not provided via --api_key_file or API_KEY environment variable. Authentication will be disabled.
+[2026-10-22 23:56:43.763][5432][serving][info][httpservermodule.cpp:52] HTTPServerModule started
+[2026-10-22 23:56:43.763][5432][serving][info][httpservermodule.cpp:53] Started REST server at 127.0.0.1:9188
+[2026-10-22 23:56:43.764][5432][serving][info][server.cpp:472] Graph config created in memory from model_path: C:\Users\testc\qwen36-35b-a3b-baseline\models\Qwen3.6-35B-A3B-int4-ov
+[2026-10-22 23:56:43.764][5432][serving][info][servablemanagermodule.cpp:51] ServableManagerModule starting
+[2026-10-22 23:56:43.766][5432][serving][info][mediapipegraphdefinition.cpp:515] MediapipeGraphDefinition initializing graph nodes
+[2026-10-22 23:56:43.766][5432][modelmanager][info][servable_initializer.cpp:572] Initializing Visual Language Model Continuous Batching servable
+[2026-10-22 23:56:58.627][5432][llm_calculator][info][servable_initializer.cpp:137] Using manually configured tool_parser: qwen3coder
+[2026-10-22 23:56:58.627][5432][llm_calculator][info][servable_initializer.cpp:147] Using manually configured reasoning_parser: qwen3
+[2026-10-22 23:56:58.629][17672][llm_executor][info][llm_executor.hpp:128] All requests: 0; Scheduled requests: 0;
+[2026-10-22 23:56:58.632][5432][modelmanager][info][mediapipegraphdefinition.cpp:297] Mediapipe: qwen inputs: 
+name: input; mapping: ; shape: (); precision: UNDEFINED; layout: ...
+[2026-10-22 23:56:58.633][5432][modelmanager][info][mediapipegraphdefinition.cpp:298] Mediapipe: qwen outputs: 
+name: output; mapping: ; shape: (); precision: UNDEFINED; layout: ...
+[2026-10-22 23:56:58.633][5432][modelmanager][info][mediapipegraphdefinition.cpp:299] Mediapipe: qwen kfs pass through: false
+[2026-10-22 23:56:58.633][5432][modelmanager][info][pipelinedefinitionstatus.hpp:60] Mediapipe: qwen state changed to: AVAILABLE after handling: ValidationPassedEvent: 
+[2026-10-22 23:56:58.633][5432][serving][info][servablemanagermodule.cpp:55] ServableManagerModule started
+[2026-10-22 23:56:58.634][22656][modelmanager][info][modelmanager.cpp:1048] Started model manager thread
+[2026-10-22 23:56:58.634][27104][modelmanager][info][modelmanager.cpp:1067] Started cleaner thread
+[2026-10-22 23:57:13.313][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 100.0% of 32.6 MB;
+[2026-10-22 23:57:14.454][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 100.0% of 32.6 MB;
+[2026-10-22 23:57:15.361][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 100.0% of 32.6 MB;
+[2026-10-22 23:57:16.320][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 100.0% of 32.6 MB;
+[2026-10-22 23:57:17.137][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 100.0% of 32.6 MB;
+[2026-10-22 23:57:18.010][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:18.773][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:19.360][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:19.922][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:20.515][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:21.119][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:21.903][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:22.426][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 52.2% of 66.0 MB;
+[2026-10-22 23:57:23.128][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 56.5% of 66.0 MB;
+[2026-10-22 23:57:23.759][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 56.5% of 66.0 MB;
+[2026-10-22 23:57:24.270][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 60.9% of 66.0 MB;
+[2026-10-22 23:57:24.702][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 60.9% of 66.0 MB;
+[2026-10-22 23:57:25.096][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 65.2% of 66.0 MB;
+[2026-10-22 23:57:25.639][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 69.6% of 66.0 MB;
+[2026-10-22 23:57:26.083][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 69.6% of 66.0 MB;
+[2026-10-22 23:57:26.562][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 73.9% of 66.0 MB;
+[2026-10-22 23:57:27.145][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 78.3% of 66.0 MB;
+[2026-10-22 23:57:27.598][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 78.3% of 66.0 MB;
+[2026-10-22 23:57:28.100][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 82.6% of 66.0 MB;
+[2026-10-22 23:57:28.571][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 82.6% of 66.0 MB;
+[2026-10-22 23:57:28.795][17672][llm_executor][info][llm_executor.hpp:128] All requests: 0; Scheduled requests: 0;
+[2026-10-22 23:57:29.588][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:29.920][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:30.247][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:30.569][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:30.867][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:31.195][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:31.490][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:31.815][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:32.119][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:32.420][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:32.728][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:33.054][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:33.365][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 52.2% of 66.0 MB;
+[2026-10-22 23:57:33.671][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 52.2% of 66.0 MB;
+[2026-10-22 23:57:33.988][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 56.5% of 66.0 MB;
+[2026-10-22 23:57:34.319][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 56.5% of 66.0 MB;
+[2026-10-22 23:57:34.629][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 60.9% of 66.0 MB;
+[2026-10-22 23:57:34.949][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 65.2% of 66.0 MB;
+[2026-10-22 23:57:35.273][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 65.2% of 66.0 MB;
+[2026-10-22 23:57:35.613][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 69.6% of 66.0 MB;
+[2026-10-22 23:57:35.936][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 73.9% of 66.0 MB;
+[2026-10-22 23:57:36.268][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 73.9% of 66.0 MB;
+[2026-10-22 23:57:36.573][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 78.3% of 66.0 MB;
+[2026-10-22 23:57:36.904][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 78.3% of 66.0 MB;
+[2026-10-22 23:57:37.211][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 82.6% of 66.0 MB;
+[2026-10-22 23:57:37.517][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 87.0% of 66.0 MB;
+[2026-10-22 23:57:37.585][17672][llm_executor][info][llm_executor.hpp:128] All requests: 0; Scheduled requests: 0;
+[2026-10-22 23:57:38.313][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:38.619][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:38.925][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:39.236][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:39.538][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:39.847][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:40.155][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:40.452][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:40.745][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:41.044][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:41.339][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:41.642][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:41.942][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 52.2% of 66.0 MB;
+[2026-10-22 23:57:42.250][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 52.2% of 66.0 MB;
+[2026-10-22 23:57:42.563][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 56.5% of 66.0 MB;
+[2026-10-22 23:57:42.863][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 60.9% of 66.0 MB;
+[2026-10-22 23:57:43.157][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 60.9% of 66.0 MB;
+[2026-10-22 23:57:43.461][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 65.2% of 66.0 MB;
+[2026-10-22 23:57:43.771][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 69.6% of 66.0 MB;
+[2026-10-22 23:57:44.070][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 69.6% of 66.0 MB;
+[2026-10-22 23:57:44.372][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 73.9% of 66.0 MB;
+[2026-10-22 23:57:44.690][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 73.9% of 66.0 MB;
+[2026-10-22 23:57:44.982][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 78.3% of 66.0 MB;
+[2026-10-22 23:57:45.369][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 82.6% of 66.0 MB;
+[2026-10-22 23:57:45.697][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 82.6% of 66.0 MB;
+[2026-10-22 23:57:46.073][17672][llm_executor][info][llm_executor.hpp:128] All requests: 0; Scheduled requests: 0;
+[2026-10-22 23:57:46.642][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:46.965][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:47.273][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:47.573][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:47.899][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:48.204][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:48.498][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:48.813][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:49.116][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:49.413][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:49.717][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:50.028][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:50.343][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 50.0% of 66.0 MB;
+[2026-10-22 23:57:50.641][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 52.2% of 66.0 MB;
+[2026-10-22 23:57:50.971][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 56.5% of 66.0 MB;
+[2026-10-22 23:57:51.286][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 56.5% of 66.0 MB;
+[2026-10-22 23:57:51.583][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 60.9% of 66.0 MB;
+[2026-10-22 23:57:51.888][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 65.2% of 66.0 MB;
+[2026-10-22 23:57:52.185][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 65.2% of 66.0 MB;
+[2026-10-22 23:57:52.496][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 69.6% of 66.0 MB;
+[2026-10-22 23:57:52.792][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 69.6% of 66.0 MB;
+[2026-10-22 23:57:53.098][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 73.9% of 66.0 MB;
+[2026-10-22 23:57:53.392][17672][llm_executor][info][llm_executor.hpp:105] All requests: 1; Scheduled requests: 1; Cache type: dynamic, cache usage: 78.3% of 66.0 MB;

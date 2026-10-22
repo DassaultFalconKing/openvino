@@ -1,0 +1,19 @@
+{
+  "port": 9199,
+  "max_tokens": 16,
+  "prompt": "Explain, step by step, how a least-recently-used cache works, then write a short Python class implementing it with get and put methods and O(1) operations. Finish with three edge cases to test.",
+  "runs": [],
+  "ready": true,
+  "ready_wait_s": 0.017431259155273438,
+  "warmup": {
+    "ttft_s": 17.987464500009082,
+    "total_s": 20.7849189999979,
+    "content_chunks": 14,
+    "completion_tokens": 16,
+    "prompt_tokens": 55,
+    "decode_window_s": 2.7973194000078365,
+    "decode_tok_per_s_after_first": 5.362276470809153,
+    "finish_reason": "length",
+    "text_head": "Here's a thinking process:\n\n1.  **Understand User Request:**"
+  }
+}

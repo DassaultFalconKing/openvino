@@ -1,0 +1,269 @@
+{
+  "schema_version": 1,
+  "branch": "Testrun_2026-10-23-moe-decode-regression",
+  "created_at_utc": "2026-10-22T22:55:13.3849380Z",
+  "source": {
+    "repository": "https://github.com/DassaultFalconKing/openvino.git",
+    "ref": "codex/c6-head-20261019-openvino",
+    "sha": "e5606d01c464dc125ab79183ca43c2042d0e2f67"
+  },
+  "policy": {
+    "contents": "cloud-task-tests-evidence-documentation-only",
+    "history": "root-commit-no-parent",
+    "ref_updates": "creation-only-no-force"
+  },
+  "entries": [
+    {
+      "kind": "cloud_task",
+      "path": "task/cloud-task.md",
+      "size": 3728,
+      "sha256": "f7867d23f4f82caea8a54049c715bab13e9e2b43781fae96142d161d26f4826c",
+      "git_blob": "45c8e387ec3518dacb0601a05fa46028866b1d78"
+    },
+    {
+      "kind": "test",
+      "path": "tests/ab-run.ps1",
+      "size": 3453,
+      "sha256": "0adf0b9274045e92c9f0db52fc207a759ac7c3f54eb72c851e23a6084cc235cb",
+      "git_blob": "d076bf40cc894d8e6677d71992ea6ea51a593471"
+    },
+    {
+      "kind": "test",
+      "path": "tests/sample-util.ps1",
+      "size": 3784,
+      "sha256": "ab17e3663f3bd4f5fc8daf7d70dec79d12c0e323e7a8f5a369366ee7343072e3",
+      "git_blob": "bc27ca8c2ebd2198c91ec15f2dd3f9329d3bb183"
+    },
+    {
+      "kind": "documentation",
+      "path": "docs/README.md",
+      "size": 369,
+      "sha256": "44a0b9861810a24f45bff25f8f20a9544f2f34f7e90770133fd3f8527c212f57",
+      "git_blob": "a6f9fa05fb96ce646bb68d92a45c913dab34944f"
+    },
+    {
+      "kind": "documentation",
+      "path": "docs/ROOT-CAUSE.md",
+      "size": 4623,
+      "sha256": "8855ee9c020257a5993dffbc1f10bbfdddc567f66fd0a89b6d367e58be06db25",
+      "git_blob": "9b7ee0f0d87eb186259ceffafb540b7efbd56fc5"
+    },
+    {
+      "kind": "documentation",
+      "path": "docs/rt-head-stockgpu-README.md",
+      "size": 260,
+      "sha256": "dfc636906bd003477664ea2735679a4e953b94c3abb7912246c0498548d1af9f",
+      "git_blob": "ecb1f3d5a500964dba2b558988d465e583f31f98"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/rt-head-stockgpu-manifest.json",
+      "size": 3950,
+      "sha256": "8f2e1a3b367356936bcc3b1790663b7e3c4a37a20efb1d49d0d404ec954320c4",
+      "git_blob": "7d883a18fc5bf79934821a1219c2b48c0b887ac1"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/stock-2026.4-20261022-235643/bench.json",
+      "size": 2492,
+      "sha256": "1e32c9ab48bab3de8dafd59b1d8e814cff0e5c89ede9fdf8399b11ccb7fefd89",
+      "git_blob": "7a70b0832bf32e988c2aa79d1bc4bc1c4688cb48"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/stock-2026.4-20261022-235643/run.json",
+      "size": 765,
+      "sha256": "63281b86c9341da857e0ffb994407f566a0aa29a78e72ea43867532d899a5e6d",
+      "git_blob": "c235fe96615ac9b0a58fe78849cd1a64018b36d0"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/stock-2026.4-20261022-235643/ovms.log",
+      "size": 20738,
+      "sha256": "6b0ff2dfec6eb4d4972303a1ad7bd2210ea5ffe39e7b1fe154428d27855f19af",
+      "git_blob": "7caea47a98bcbeb292fd49005617f60cddc193e5"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/stock-2026.4-20261022-235643/stdout.log",
+      "size": 21358,
+      "sha256": "a584883e8c6e8062c20db134537d99105134ae2f0c9ee1c5b1f0e32c01ad4d39",
+      "git_blob": "301fc06a124bd7698698b77423b8d9cac0b47a46"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/stock-2026.4-20261022-235643/stderr.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/base-head-20261022-235332/bench.json",
+      "size": 2500,
+      "sha256": "c82f9220c8b355f76ed127b01862efb16c0e1fbc88a1fc9949012eaff33c4e3c",
+      "git_blob": "ea85e7489d292a4027b9a75666a183b6bf96aa94"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/base-head-20261022-235332/run.json",
+      "size": 784,
+      "sha256": "b998524a2b3ac29cb322b190446dfe3f150274d1b7cf649e32c4942048dfa7ab",
+      "git_blob": "a8d58cc9181bd026347e2eaf9df313d779ebc33c"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/base-head-20261022-235332/ovms.log",
+      "size": 21298,
+      "sha256": "e3fa8ce4d52e728580e531d7abaee39264092a5285a4fcd93ca71b80dd66a40e",
+      "git_blob": "9c4969c461b8bc48ef20eeba8d6ac5af8bd9e0b4"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/base-head-20261022-235332/stdout.log",
+      "size": 21414,
+      "sha256": "81f21b3cddaf18dd9fe345332af861c93169086fe16cba38bababf62b4f1f6c9",
+      "git_blob": "81749786aedac848f90450bd16862a93b12b03b7"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/base-head-20261022-235332/stderr.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/base-head-r0-20261023-001850/bench.json",
+      "size": 1956,
+      "sha256": "5bef6f24133dc2913bd2a85e9c27a22559c8ec79b56df8ab04ac5b912f5d2d68",
+      "git_blob": "2352e426d301df3ee22917c334a684687fc09798"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/base-head-r0-20261023-001850/run.json",
+      "size": 786,
+      "sha256": "167d6b5af170dfeb4a40b93c34dae7ad56ed29893d43a4594ce17e338124058e",
+      "git_blob": "9c160238eedbc49f6dfa7561af2040d9d67122d6"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/base-head-r0-20261023-001850/ovms.log",
+      "size": 10432,
+      "sha256": "72a5a53dff8cd8b160423eb50b101cf472411a476bba75bc47611f842f03a26b",
+      "git_blob": "4f817f197d5aeea867a83871cba945e0a808b82b"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/base-head-r0-20261023-001850/stdout.log",
+      "size": 10548,
+      "sha256": "cf776af8e4b9f1d45a0396b27d55f7a592fc949f7f9701564c84201c231a2a92",
+      "git_blob": "2600b2f72119736be4cbff5d5232b7e0b80fac23"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/base-head-r0-20261023-001850/stderr.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-util-r0-20261023-002334/bench.json",
+      "size": 1350,
+      "sha256": "93c45ba61453aa69c9504fd5cd5c2d7fb7484f58d48d4e4687c32d062690ac99",
+      "git_blob": "0b327a2be42c995068433598d6aaa4d54e4f1227"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-util-r0-20261023-002334/warmup.json",
+      "size": 713,
+      "sha256": "3bbe543ee1174f0811dd18f8312b06fc07d2008a8d0ad5af75d68fce3f910cbf",
+      "git_blob": "886dca6a7ad85ef70b18b9c56dec3684c518ab7b"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-util-r0-20261023-002334/ovms.log",
+      "size": 5987,
+      "sha256": "c0c71ec1fc7bb7838fe777323ca8dfb2732e48dc347b7c6945b8a577aa216ad0",
+      "git_blob": "1483a894ddae3dde19477cd365580295f082f9a8"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-util-r0-20261023-002334/stdout.log",
+      "size": 5987,
+      "sha256": "c0c71ec1fc7bb7838fe777323ca8dfb2732e48dc347b7c6945b8a577aa216ad0",
+      "git_blob": "1483a894ddae3dde19477cd365580295f082f9a8"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-util-r0-20261023-002334/stderr.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-stockgpu-20261022-235845/run.json",
+      "size": 820,
+      "sha256": "5914545f5f66941bb53556a05f5fb0c48729398c46c276fd6f47871dcba3ee52",
+      "git_blob": "a256f59d0aedad33d60309082affd605af7d84f7"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-stockgpu-20261022-235845/ovms.log",
+      "size": 4840,
+      "sha256": "77b31e22f39a7290e8d2ef364c47d3fa9e283efad296c6e9e55fe15392f14a60",
+      "git_blob": "be6ade719e6de7872a9c353b44afff4d63270c7e"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-stockgpu-20261022-235845/stdout.log",
+      "size": 4840,
+      "sha256": "77b31e22f39a7290e8d2ef364c47d3fa9e283efad296c6e9e55fe15392f14a60",
+      "git_blob": "be6ade719e6de7872a9c353b44afff4d63270c7e"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-stockgpu-20261022-235845/stderr.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-moe-path-20261023-004014/bench.json",
+      "size": 1219,
+      "sha256": "4a228c59855f7a818b539670987b6f93e3673069cb5378a1fd2df99913882e8a",
+      "git_blob": "e8dc19b8b3391477f2bc19f71f0119f40e4a9f5f"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-moe-path-20261023-004014/run.json",
+      "size": 744,
+      "sha256": "7c82a23d2d5f7ff43a280473dc36e72caa3731acbc09c7ef76ef913f4a2d0ac1",
+      "git_blob": "f6c1cee76876b4c725272e86c5be510f9f5fec44"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-moe-path-20261023-004014/ovms.log",
+      "size": 4772,
+      "sha256": "dad1b925e6c24c830985bba6e9fac1080f0f5114f4d759c8f64d9e53bf59b0ce",
+      "git_blob": "bb0fb6c9a86a088e95df79ee71579b46795be4a0"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-moe-path-20261023-004014/stdout.log",
+      "size": 5056,
+      "sha256": "e1620314a8d1058016fa7e95c470da5c37cd25507bc6e4ecad65b2142f901c8c",
+      "git_blob": "c84b3b750837363c73d4be51f79f4f698d86c1d5"
+    },
+    {
+      "kind": "evidence",
+      "path": "evidence/runs/head-moe-path-20261023-004014/stderr.log",
+      "size": 4817,
+      "sha256": "b80d2fedaa1f5e09558faf96d246c90d1c718471808dc7881482f436c1ef62d2",
+      "git_blob": "8c4f782a66a32e852d89e012dd11566f46e8a9c8"
+    }
+  ]
+}

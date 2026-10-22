@@ -1,0 +1,17 @@
+{
+    "tag":  "stock-2026.4",
+    "runtime":  "C:\\llm\\ovms",
+    "pid":  10468,
+    "free_mib":  19254,
+    "extra_args":  [
+
+                   ],
+    "env":  {
+
+            },
+    "plugin_config":  "{\"OFFLOAD_RATIO\":20,\"WEIGHTS_PATH\":\"C:/Users/testc/qwen36-35b-a3b-baseline/models/Qwen3.6-35B-A3B-int4-ov/openvino_language_model.bin\",\"CACHE_DIR\":\"C:/gm/orchestration/decode-regression-20261022/cache/21A2FD9F5D85\"}",
+    "ovms_sha":  "073ED783610883F9060FE861736C683A7EDFF59937B25DBD18E1FDEEA14007FC",
+    "gpu_plugin_sha":  "21A2FD9F5D856C297416059325832F0F902C84A4E78B840F859CA508F5AEA66D",
+    "openvino_sha":  "829C4642E287522F8A8E748A726D4AD3117A701E22AB46ADC82771F98E5D2F7E",
+    "started_at":  "2026-10-22T21:56:43.4644134Z"
+}
