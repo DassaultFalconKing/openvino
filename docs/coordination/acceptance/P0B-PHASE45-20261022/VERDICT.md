@@ -6,6 +6,8 @@
 
 `OTD_RESIDENT_USM_HOST` remains **default off** in code; path B enabled only via env on staged runtime.
 
+Full local evidence: `C:\gm\orchestration\p0b-inflight-20261022\phase4-5\`.
+
 ## Pins
 
 | Item | Value |
@@ -13,12 +15,13 @@
 | Branch | `scratch/uma-02-host-harness-20261022` |
 | Draft PR | https://github.com/DassaultFalconKing/openvino/pull/8 |
 | Device | Intel(R) Arc(TM) 140V GPU (16GB) |
-| Harness / docs tip (this packet) | *(see commit after this file)* |
 | `ov_gpu_unit_tests.exe` SHA256 | `511D941D077BF2AA07BA3893A4B2C2A6264DDA069E1477C51FB5546151A31FA3` |
 | Scratch `openvino_intel_gpu_plugin.dll` SHA256 | `5207901E9096C86B4D55F2AE531F0B23C16C815100F6C6D75C1487C0861A3828` |
+| Candidate GPU plugin (untouched) | `1093B69F6314898238FFEC06FB46631759526E89C90E3E3FD2FD29C122E8058E` |
+| Staged `openvino.dll` (= candidate) | `13A3C5A91BD6AA45D29271E08613056F09F0F7DD067250C2BAC6B02C96597C8F` |
 | Candidate `runtime\otd` | **UNTOUCHED** |
-| Staged runtime | `C:\gm\otd-research\runtime\otd-p0b-phase45-20261022` (plugin swapped; candidate `openvino.dll` restored for CPU) |
-| Local evidence | `C:\gm\orchestration\p0b-inflight-20261022\phase4-5\` |
+| Staged runtime | `C:\gm\otd-research\runtime\otd-p0b-phase45-20261022` |
+| Fresh pack | `C:\gm\otd-research\packs\ornith-35b-ov-r20` — **40** `.pack` files (wiped + rebuilt; do not use prior partial/stale r20) |
 
 ## Phase 4 — ornith-scale GEMM/GEMV A/B
 
@@ -50,21 +53,16 @@ Steady B does **not** erase cold-copy savings → **not** `B_PERF_REJECTED`.
 
 ## Phase 5 — short OVMS C1/C2/C4 @ OFFLOAD_RATIO=20
 
-Pack: `packs\ornith-35b-ov-r20` (8 content-keyed pack files; build reported finished).  
-Serve A then B on staged runtime; kill `ovms` between paths. max_tokens=48.
+Operator interrupt: wiped stale `ornith-35b-ov-r20` and rebuilt fresh on staged runtime before serve. Pack build reported **40** files (`ovms-build-r20-pathA-20261022-221512`). Serve A then B; kill `ovms` after each. max_tokens=48.
 
 | Path | ready | warmup TTFT s | C1 | C2 | C4 | fatals |
 |---|---|---:|---|---|---|---|
-| A (flag off) | yes | ~18.2 | 1/1 | 2/2 | 4/4 | none |
-| B (`OTD_RESIDENT_USM_HOST=1`) | yes | ~9.1 | 1/1 | 2/2 | 4/4 | none |
+| A (flag `0`) | yes (~42 s) | ~8.95 | 1/1 (~0.59 s) | 2/2 (~1.15–1.43 s) | 4/4 (~1.77–1.92 s) | none |
+| B (`OTD_RESIDENT_USM_HOST=1`) | yes (~283 s) | ~13.79 | 1/1 (~0.58 s) | 2/2 (~1.11–1.39 s) | 4/4 (~1.65–1.80 s) | none |
 
-C1 TTFT (measured round): A ~0.61 s · B ~0.62 s. No `GPU_CONTEXT_FATAL` / OOM / output-stop / race symptoms in log scan.
+`MODEL_PASS`. No `GPU_CONTEXT_FATAL` / OOM / race symptoms on stop-scan.
 
-**MODEL_PASS** for this short C1/C2/C4 slice (not soak; ratios 25/30 not run — time).
+## Governance
 
-## Explicit non-claims
-
-- No production enablement; flag stays default off.
-- No merge of PR #8 / #6.
-- Candidate `C:\gm\otd-research\runtime\otd` not mutated.
-- Short concurrent probe ≠ overnight soak / full quality matrix.
+- No C6 / OVMS / driver source changes.
+- No merge of PR #8 / #6; no soak; no production enablement.
