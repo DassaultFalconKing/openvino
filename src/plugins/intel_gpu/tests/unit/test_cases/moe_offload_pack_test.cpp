@@ -3,6 +3,10 @@
 //
 
 #include <cstddef>
+#include <cstring>
+#include <functional>
+#include <limits>
+#include <stdexcept>
 #include <fstream>
 #include <random>
 #include <string>
@@ -75,6 +79,49 @@ void flip_byte(const std::filesystem::path& path, uint64_t offset) {
     c = static_cast<char>(c ^ 0x5A);
     io.seekp(static_cast<std::streamoff>(offset));
     io.write(&c, 1);
+}
+
+
+// Exercise the same read-then-check boundary used by fill_weights_from_pack.
+// This is deliberately independent of the whole-file verify_pack() utility.
+std::vector<uint8_t> serving_read(const PackLayout& layout,
+                                  const std::filesystem::path& path,
+                                  uint32_t expert,
+                                  size_t& reads) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("OTD test reader: missing pack");
+    }
+    std::vector<uint8_t> staging;
+    read_verified_record(layout, expert, staging, [&](char* dst, size_t size, uint64_t offset) {
+        ++reads;
+        in.clear();
+        in.seekg(static_cast<std::streamoff>(offset));
+        if (!in.read(dst, static_cast<std::streamsize>(size))) {
+            throw std::runtime_error("OTD test reader: short read");
+        }
+    });
+    return staging;
+}
+
+uint64_t resealed_header_hash(PackHeader header) {
+    header.header_checksum = 0;
+    uint64_t hash = 14695981039346656037ULL;
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&header);
+    for (size_t i = 0; i < sizeof(PackHeader); ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+void write_header(const std::filesystem::path& path, PackHeader header) {
+    header.header_checksum = resealed_header_hash(header);
+    std::fstream out(path, std::ios::in | std::ios::out | std::ios::binary);
+    out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    if (!out) {
+        throw std::runtime_error("OTD test writer: header update failed");
+    }
 }
 
 }  // namespace
@@ -250,6 +297,109 @@ TEST(moe_otd_pack, placement_reorders_records_without_changing_contents) {
     }
     ASSERT_EQ(verify_pack(built.path, spec), 0U);
     ASSERT_THROW(PackLayout::plan(spec).set_placement({0, 0, 1, 2, 3, 4}), std::invalid_argument);
+}
+
+
+TEST(moe_otd_pack, serving_read_validates_logical_expert_before_gpu_copy) {
+    TempDir dir;
+    const auto spec = make_spec();
+    const std::vector<uint32_t> placement = {5, 0, 4, 1, 3, 2};
+    const auto built = build_pack(dir.path, spec, pattern_source(spec), placement);
+    const auto pack = PackLayout::open(built.path, spec);
+    ASSERT_TRUE(pack.has_value());
+
+    size_t reads = 0;
+    for (uint32_t e = 0; e < spec.num_expert; ++e) {
+        const auto record = serving_read(*pack, built.path, e, reads);
+        ASSERT_EQ(record[0], byte_of(e, 0, 0));
+    }
+    ASSERT_EQ(reads, spec.num_expert);
+    ASSERT_FALSE(pack->verify_record_payload(static_cast<uint32_t>(spec.num_expert), nullptr, 0));
+
+    // Detect corruption of first and last logical experts, including one
+    // physically stored at the opposite end of the placement permutation.
+    for (const uint32_t e : {uint32_t{0}, static_cast<uint32_t>(spec.num_expert - 1)}) {
+        const auto offset = pack->record_offset(e) + pack->tensor_offset_in_record(0);
+        flip_byte(built.path, offset);
+        const auto before = reads;
+        EXPECT_THROW(serving_read(*pack, built.path, e, reads), PackIntegrityError);
+        EXPECT_EQ(reads, before + 1);
+        flip_byte(built.path, offset);
+    }
+    ASSERT_EQ(verify_pack(built.path, spec), 0U);
+}
+
+TEST(moe_otd_pack, serving_read_rejects_corrupt_checksum_and_truncated_record) {
+    TempDir dir;
+    const auto spec = make_spec();
+    const auto built = build_pack(dir.path, spec, pattern_source(spec));
+    const auto pack = PackLayout::open(built.path, spec);
+    ASSERT_TRUE(pack.has_value());
+
+    // Checksum table is keyed by logical expert, not record position.
+    flip_byte(built.path, pack->header().checksums_offset + 2 * sizeof(uint64_t));
+    const auto changed_table = PackLayout::open(built.path, spec);
+    ASSERT_TRUE(changed_table.has_value());
+    size_t reads = 0;
+    EXPECT_THROW(serving_read(*changed_table, built.path, 2, reads), PackIntegrityError);
+    EXPECT_EQ(reads, 1U);
+    EXPECT_NO_THROW(serving_read(*changed_table, built.path, 3, reads));
+
+    // Metadata was read before truncation: even a late, short runtime read
+    // must fail closed rather than return zero-filled or stale data.
+    std::filesystem::resize_file(built.path, pack->record_offset(5) + 8);
+    EXPECT_THROW(serving_read(*pack, built.path, 5, reads), std::runtime_error);
+    std::string reason;
+    EXPECT_FALSE(PackLayout::open(built.path, spec, &reason));
+    EXPECT_EQ(reason, "truncated records");
+}
+
+TEST(moe_otd_pack, resealed_noncanonical_offsets_and_sizes_are_rejected) {
+    TempDir dir;
+    const auto spec = make_spec();
+    const auto built = build_pack(dir.path, spec, pattern_source(spec));
+    const auto pack = PackLayout::open(built.path, spec);
+    ASSERT_TRUE(pack.has_value());
+    const PackHeader good = pack->header();
+
+    const std::vector<std::function<void(PackHeader&)>> mutations = {
+        [](PackHeader& h) { h.header_bytes = 0; },
+        [](PackHeader& h) { h.placement_offset = 1; },
+        [](PackHeader& h) { h.checksums_offset = 1; },
+        [](PackHeader& h) { h.records_offset = std::numeric_limits<uint64_t>::max() - 1; },
+        [](PackHeader& h) { h.record_stride = std::numeric_limits<uint64_t>::max(); },
+        [](PackHeader& h) { h.tensor_offset_in_record[2] = std::numeric_limits<uint64_t>::max(); },
+    };
+    for (const auto& mutate : mutations) {
+        auto forged = good;
+        mutate(forged);
+        write_header(built.path, forged);
+        std::string reason;
+        EXPECT_FALSE(PackLayout::open(built.path, spec, &reason)) << reason;
+        EXPECT_EQ(reason, "non-canonical pack header layout");
+    }
+    write_header(built.path, good);
+    EXPECT_TRUE(PackLayout::open(built.path, spec));
+}
+
+TEST(moe_otd_pack, invalid_placement_table_and_overflowed_plan_fail_closed) {
+    TempDir dir;
+    const auto spec = make_spec();
+    const auto built = build_pack(dir.path, spec, pattern_source(spec));
+    const auto pack = PackLayout::open(built.path, spec);
+    ASSERT_TRUE(pack.has_value());
+    flip_byte(built.path, pack->header().placement_offset);
+    std::string reason;
+    EXPECT_FALSE(PackLayout::open(built.path, spec, &reason));
+    EXPECT_EQ(reason, "corrupt placement table");
+
+    auto overflow = spec;
+    overflow.tensor_bytes[0] = std::numeric_limits<uint64_t>::max();
+    EXPECT_THROW(PackLayout::plan(overflow), std::overflow_error);
+    auto zero_experts = spec;
+    zero_experts.num_expert = 0;
+    EXPECT_THROW(PackLayout::plan(zero_experts), std::invalid_argument);
+    EXPECT_NO_THROW(PackLayout::plan(make_spec(1)));
 }
 
 TEST(moe_otd_pack, failing_source_leaves_no_pack) {

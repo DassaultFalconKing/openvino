@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -35,8 +36,22 @@ uint64_t fnv_u64(uint64_t hash, uint64_t value) {
     return fnv_update(hash, &value, sizeof(value));
 }
 
+uint64_t checked_add(uint64_t a, uint64_t b) {
+    if (b > std::numeric_limits<uint64_t>::max() - a) {
+        throw std::overflow_error("OTD pack: size addition overflow");
+    }
+    return a + b;
+}
+
+uint64_t checked_mul(uint64_t a, uint64_t b) {
+    if (a && b > std::numeric_limits<uint64_t>::max() / a) {
+        throw std::overflow_error("OTD pack: size multiplication overflow");
+    }
+    return a * b;
+}
+
 uint64_t align_up(uint64_t value, uint64_t alignment) {
-    return (value + alignment - 1) / alignment * alignment;
+    return checked_mul(checked_add(value, alignment - 1) / alignment, alignment);
 }
 
 uint64_t header_checksum_of(PackHeader header) {
@@ -142,15 +157,19 @@ PackLayout PackLayout::plan(const PackLayerSpec& spec) {
     for (size_t t = 0; t < pack_tensor_count; t++) {
         h.tensor_bytes[t] = spec.tensor_bytes[t];
         h.tensor_offset_in_record[t] = cursor;
-        cursor = align_up(cursor + spec.tensor_bytes[t], tensor_alignment);
+        cursor = align_up(checked_add(cursor, spec.tensor_bytes[t]), tensor_alignment);
     }
     if (cursor == 0) {
         throw std::invalid_argument("OTD pack: layer has no tensor bytes");
     }
     h.record_stride = align_up(cursor, pack_alignment);
     h.placement_offset = pack_alignment;
-    h.checksums_offset = h.placement_offset + align_up(spec.num_expert * sizeof(uint32_t), 8);
-    h.records_offset = align_up(h.checksums_offset + spec.num_expert * sizeof(uint64_t), pack_alignment);
+    h.checksums_offset = checked_add(h.placement_offset, align_up(checked_mul(spec.num_expert, sizeof(uint32_t)), 8));
+    h.records_offset = align_up(checked_add(h.checksums_offset, checked_mul(spec.num_expert, sizeof(uint64_t))), pack_alignment);
+    const auto full_size = checked_add(h.records_offset, checked_mul(spec.num_expert, h.record_stride));
+    if (full_size > static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max())) {
+        throw std::overflow_error("OTD pack: file offsets exceed stream limits");
+    }
 
     layout._placement.resize(spec.num_expert);
     for (uint32_t e = 0; e < spec.num_expert; e++) {
@@ -178,11 +197,18 @@ uint64_t PackLayout::record_offset(uint64_t expert) const {
     if (expert >= _placement.size()) {
         throw std::out_of_range("OTD pack: expert out of range");
     }
-    return _header.records_offset + static_cast<uint64_t>(_placement[expert]) * _header.record_stride;
+    return checked_add(_header.records_offset, checked_mul(static_cast<uint64_t>(_placement[expert]), _header.record_stride));
 }
 
 uint64_t PackLayout::file_size() const {
-    return _header.records_offset + _header.num_expert * _header.record_stride;
+    return checked_add(_header.records_offset, checked_mul(_header.num_expert, _header.record_stride));
+}
+
+bool PackLayout::verify_record_payload(uint32_t expert, const void* data, size_t bytes) const {
+    if (expert >= _checksums.size() || bytes != record_payload_bytes() || (bytes && !data)) {
+        return false;
+    }
+    return fnv_update(fnv_offset, data, bytes) == _checksums[expert];
 }
 
 void PackLayout::set_placement(std::vector<uint32_t> placement) {
@@ -228,7 +254,25 @@ std::optional<PackLayout> PackLayout::open(const std::filesystem::path& path, co
             return std::nullopt;
         }
     }
-    if (actual_size < layout.file_size()) {
+    // Reject impossibly small files before planning/allocating the expected layout.
+    // The configured expert count is trusted model metadata; the on-disk count is not.
+    if (expected.num_expert == 0 || expected.num_expert > UINT32_MAX ||
+        actual_size / pack_alignment < expected.num_expert) {
+        set_reason(reason, "truncated records");
+        return std::nullopt;
+    }
+    PackLayout canonical;
+    try {
+        canonical = PackLayout::plan(expected);
+    } catch (const std::exception&) {
+        set_reason(reason, "invalid expected pack layout");
+        return std::nullopt;
+    }
+    if (std::memcmp(&h, &canonical.header(), sizeof(PackHeader)) != 0) {
+        set_reason(reason, "non-canonical pack header layout");
+        return std::nullopt;
+    }
+    if (actual_size < canonical.file_size()) {
         set_reason(reason, "truncated records");
         return std::nullopt;
     }
@@ -243,6 +287,13 @@ std::optional<PackLayout> PackLayout::open(const std::filesystem::path& path, co
         return std::nullopt;
     }
     layout._placement = std::move(placement);
+    layout._checksums.resize(h.num_expert);
+    in.seekg(static_cast<std::streamoff>(h.checksums_offset));
+    if (!in.read(reinterpret_cast<char*>(layout._checksums.data()),
+                 static_cast<std::streamsize>(layout._checksums.size() * sizeof(uint64_t)))) {
+        set_reason(reason, "truncated checksum table");
+        return std::nullopt;
+    }
     return layout;
 }
 
@@ -344,17 +395,13 @@ uint64_t verify_pack(const std::filesystem::path& path, const PackLayerSpec& spe
         return spec.num_expert == 0 ? 1 : spec.num_expert;
     }
     std::ifstream in(path, std::ios::binary);
-    std::vector<uint64_t> checksums(spec.num_expert);
-    in.seekg(static_cast<std::streamoff>(layout->header().checksums_offset));
-    in.read(reinterpret_cast<char*>(checksums.data()), static_cast<std::streamsize>(checksums.size() * sizeof(uint64_t)));
-
     const uint64_t payload = layout->record_payload_bytes();
     std::vector<uint8_t> record(payload);
     uint64_t corrupt = 0;
     for (uint64_t e = 0; e < spec.num_expert; e++) {
         in.seekg(static_cast<std::streamoff>(layout->record_offset(e)));
         if (!in.read(reinterpret_cast<char*>(record.data()), static_cast<std::streamsize>(payload)) ||
-            fnv_update(fnv_offset, record.data(), payload) != checksums[e]) {
+            !layout->verify_record_payload(static_cast<uint32_t>(e), record.data(), record.size())) {
             corrupt++;
             in.clear();
         }

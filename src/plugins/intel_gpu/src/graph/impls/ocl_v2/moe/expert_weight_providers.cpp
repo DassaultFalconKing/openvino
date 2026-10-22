@@ -45,6 +45,7 @@ OffloadExpertWeightProvider::OffloadExpertWeightProvider(size_t capacity,
 void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const std::filesystem::path& dir, const moe_otd::RoutedTensorLayouts& layouts) {
     _pack.reset();
     _pack_reader.reset();
+    _pack_name.clear();
     if (mode == moe_otd::PackMode::off) {
         return;
     }
@@ -68,6 +69,7 @@ void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const s
     }
     _pack = std::move(pack);
     _pack_reader = std::make_unique<moe_otd::ParallelWeightReader>(path);
+    _pack_name = path.filename().string();
 }
 
 void OffloadExpertWeightProvider::bind(cldnn::moe_weights& resident) {
@@ -112,7 +114,13 @@ LRUCache::Lookup OffloadExpertWeightProvider::acquire_slot(uint32_t expert, cldn
         }
         OPENVINO_ASSERT(_resident != nullptr, "OffloadExpertWeightProvider: resident buffers not bound");
         if (_pack) {
-            moe_otd::fill_weights_from_pack(stream, *_pack, *_pack_reader, *_resident, expert, item.slot, _pack_staging, trace ? &load : nullptr);
+            // The slot stays unfilled on failure, so a later lookup of this expert is a miss, never a stale hit.
+            try {
+                moe_otd::fill_weights_from_pack(stream, *_pack, *_pack_reader, *_resident, expert, item.slot, _pack_staging, trace ? &load : nullptr);
+            } catch (const moe_otd::PackIntegrityError& e) {
+                OPENVINO_THROW("MoE OTD pack ", _pack_name, " rejected expert ", expert, " for slot ", item.slot, ": ", e.what(),
+                               "; resident device memory was not modified");
+            }
         } else {
             moe_otd::fill_weights_memory(stream, _config, _weight_bin_offsets, _weight_reader, *_resident, {expert}, {item.slot}, trace ? &load : nullptr);
         }
