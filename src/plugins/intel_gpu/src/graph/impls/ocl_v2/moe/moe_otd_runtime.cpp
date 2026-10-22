@@ -5,6 +5,7 @@
 #include "moe_otd_runtime.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -14,6 +15,80 @@
 #include "intel_gpu/runtime/debug_configuration.hpp"
 
 namespace ov::intel_gpu::ocl::moe_otd {
+
+namespace {
+std::atomic<uint64_t> g_path_b_scatter_entries{0};
+std::atomic<uint64_t> g_path_b_fence_calls{0};
+
+bool env_flag_is_one(const char* name) {
+    const char* v = std::getenv(name);
+    return v != nullptr && v[0] == '1' && v[1] == '\0';
+}
+
+bool residents_are_path_b(const std::array<cldnn::memory_ptr, pack_tensor_count>& tensors, const PackLayout& pack) {
+    bool saw_host = false;
+    bool saw_device = false;
+    for (size_t t = 0; t < pack_tensor_count; t++) {
+        const uint64_t size = pack.tensor_bytes(t);
+        const auto& mem = tensors[t];
+        if (size == 0 || !mem) {
+            continue;
+        }
+        const auto alloc = mem->get_allocation_type();
+        if (alloc == cldnn::allocation_type::usm_host) {
+            saw_host = true;
+        } else {
+            saw_device = true;
+        }
+    }
+    OPENVINO_ASSERT(!(saw_host && saw_device), "OTD path B: mixed usm_host/usm_device residents are not supported");
+    return saw_host;
+}
+
+void scatter_verified_record_to_residents(const PackLayout& pack,
+                                          const std::array<cldnn::memory_ptr, pack_tensor_count>& tensors,
+                                          size_t slot,
+                                          const std::vector<uint8_t>& staging) {
+    g_path_b_scatter_entries.fetch_add(1, std::memory_order_relaxed);
+    for (size_t t = 0; t < pack_tensor_count; t++) {
+        const uint64_t size = pack.tensor_bytes(t);
+        const auto& mem = tensors[t];
+        if (size == 0 || !mem) {
+            continue;
+        }
+        OPENVINO_ASSERT(mem->get_allocation_type() == cldnn::allocation_type::usm_host,
+                        "OTD path B scatter requires usm_host residents");
+        auto* base = static_cast<char*>(mem->buffer_ptr());
+        OPENVINO_ASSERT(base != nullptr, "OTD path B: usm_host buffer_ptr is null");
+        std::memcpy(base + slot * size, staging.data() + pack.tensor_offset_in_record(t), static_cast<size_t>(size));
+    }
+}
+
+void fence_path_b_publish(cldnn::stream& exec_stream) {
+    // CacheCoherentUMA=false on the target Arc host: host stores into USM are not
+    // automatically GPU-visible. flush+finish mirrors blocking copy_from publish.
+    exec_stream.flush();
+    exec_stream.finish();
+    g_path_b_fence_calls.fetch_add(1, std::memory_order_relaxed);
+}
+}  // namespace
+
+bool otd_resident_usm_host_enabled() {
+    return env_flag_is_one("OTD_RESIDENT_USM_HOST");
+}
+
+void reset_path_b_harness_counters() {
+    g_path_b_scatter_entries.store(0, std::memory_order_relaxed);
+    g_path_b_fence_calls.store(0, std::memory_order_relaxed);
+}
+
+uint64_t path_b_scatter_entries() {
+    return g_path_b_scatter_entries.load(std::memory_order_relaxed);
+}
+
+uint64_t path_b_fence_calls() {
+    return g_path_b_fence_calls.load(std::memory_order_relaxed);
+}
 
 void OtdPerfCounters::record_load(const ExpertLoadStats& load) {
     expert_loads.fetch_add(1, std::memory_order_relaxed);
@@ -414,13 +489,20 @@ void fill_weights_from_pack(cldnn::stream& exec_stream,
     // occurs on a bad checksum. Keep checksum CPU time outside GPU-copy timing.
     const auto t2 = timed ? clock::now() : clock::time_point{};
 
-    for (size_t t = 0; t < pack_tensor_count; t++) {
-        const uint64_t size = pack.tensor_bytes(t);
-        const auto& mem = tensors[t];
-        if (size == 0 || !mem) {
-            continue;
+    const bool path_b = residents_are_path_b(tensors, pack);
+    if (path_b) {
+        // UMA-02 path B: CPU scatter into usm_host, then explicit fence before the caller set_filled.
+        scatter_verified_record_to_residents(pack, tensors, slot, staging);
+        fence_path_b_publish(exec_stream);
+    } else {
+        for (size_t t = 0; t < pack_tensor_count; t++) {
+            const uint64_t size = pack.tensor_bytes(t);
+            const auto& mem = tensors[t];
+            if (size == 0 || !mem) {
+                continue;
+            }
+            mem->copy_from(exec_stream, staging.data() + pack.tensor_offset_in_record(t), 0, slot * size, size, true);
         }
-        mem->copy_from(exec_stream, staging.data() + pack.tensor_offset_in_record(t), 0, slot * size, size, true);
     }
 
     if (perf) {

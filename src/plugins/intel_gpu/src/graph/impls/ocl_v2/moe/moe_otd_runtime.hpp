@@ -150,6 +150,8 @@ PackBuildResult build_layer_pack(const std::filesystem::path& dir,
                                  ParallelWeightReader& weight_reader);
 
 // Streams one expert from a pack into `slot` with a single positional read and no transpose.
+// Path A (default): usm_device residents via memory::copy_from.
+// Path B (scratch): usm_host residents via CPU scatter + stream fence before the caller set_filled.
 void fill_weights_from_pack(cldnn::stream& exec_stream,
                             const PackLayout& pack,
                             ParallelWeightReader& pack_reader,
@@ -158,5 +160,14 @@ void fill_weights_from_pack(cldnn::stream& exec_stream,
                             size_t slot,
                             std::vector<uint8_t>& staging,
                             ExpertLoadStats* stats = nullptr);
+
+// Scratch UMA-02 policy: allocate OTD partial-upload residents as usm_host when env is "1".
+// Default off — production / Wave-01 / C6 keep preferred usm_device.
+bool otd_resident_usm_host_enabled();
+
+// Test-visible counters for UMA-02 host harness (path B only).
+void reset_path_b_harness_counters();
+uint64_t path_b_scatter_entries();
+uint64_t path_b_fence_calls();
 
 }  // namespace ov::intel_gpu::ocl::moe_otd
