@@ -45,6 +45,7 @@ OffloadExpertWeightProvider::OffloadExpertWeightProvider(size_t capacity,
 void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const std::filesystem::path& dir, const moe_otd::RoutedTensorLayouts& layouts) {
     _pack.reset();
     _pack_reader.reset();
+    _pack_name.clear();
     if (mode == moe_otd::PackMode::off) {
         return;
     }
@@ -66,8 +67,36 @@ void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const s
         std::cerr << ("MOE OTD pack " + path.filename().string() + " unusable (" + reason + "), streaming from weights file\n");
         return;
     }
+    // PackLayout::open used its own short-lived stream. Open the serving handle NOW,
+    // and validate the exact metadata from that handle before accepting the pack.
+    // On POSIX rename, this pins the old inode; on Windows it also prevents replacing
+    // the file while a non-FILE_SHARE_DELETE reader is alive. No read can silently
+    // switch to a new file after its expected checksum table was loaded.
+    std::unique_ptr<moe_otd::ParallelWeightReader> reader;
+    try {
+        reader = std::make_unique<moe_otd::ParallelWeightReader>(path);
+        const auto file_bytes = reader->file_size();  // eagerly opens / pins the handle
+        if (!pack->matches_reader_snapshot(file_bytes, [&](char* dst, size_t size, uint64_t offset) {
+                reader->read(dst, size, offset);
+            })) {
+            reason = "pack metadata changed before the serving reader was opened";
+            pack.reset();
+        }
+    } catch (const std::exception&) {
+        reason = "cannot open or read the serving pack handle";
+        pack.reset();
+        reader.reset();
+    }
+    if (!pack) {
+        OPENVINO_ASSERT(mode != moe_otd::PackMode::require,
+                        "MoE OTD pack ", path.filename().string(), " is unusable: ", reason);
+        std::cerr << ("MOE OTD pack " + path.filename().string() + " unusable (" + reason +
+                      "), streaming from weights file\n");
+        return;
+    }
     _pack = std::move(pack);
-    _pack_reader = std::make_unique<moe_otd::ParallelWeightReader>(path);
+    _pack_reader = std::move(reader);
+    _pack_name = path.filename().string();
 }
 
 void OffloadExpertWeightProvider::bind(cldnn::moe_weights& resident) {
@@ -112,7 +141,13 @@ LRUCache::Lookup OffloadExpertWeightProvider::acquire_slot(uint32_t expert, cldn
         }
         OPENVINO_ASSERT(_resident != nullptr, "OffloadExpertWeightProvider: resident buffers not bound");
         if (_pack) {
-            moe_otd::fill_weights_from_pack(stream, *_pack, *_pack_reader, *_resident, expert, item.slot, _pack_staging, trace ? &load : nullptr);
+            // The slot stays unfilled on failure, so a later lookup of this expert is a miss, never a stale hit.
+            try {
+                moe_otd::fill_weights_from_pack(stream, *_pack, *_pack_reader, *_resident, expert, item.slot, _pack_staging, trace ? &load : nullptr);
+            } catch (const moe_otd::PackIntegrityError& e) {
+                OPENVINO_THROW("MoE OTD pack ", _pack_name, " rejected expert ", expert, " for slot ", item.slot, ": ", e.what(),
+                               "; resident device memory was not modified");
+            }
         } else {
             moe_otd::fill_weights_memory(stream, _config, _weight_bin_offsets, _weight_reader, *_resident, {expert}, {item.slot}, trace ? &load : nullptr);
         }

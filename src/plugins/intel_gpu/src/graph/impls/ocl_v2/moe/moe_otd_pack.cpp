@@ -8,14 +8,66 @@
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
 
+#ifdef _WIN32
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    include <windows.h>
+#else
+#    include <cerrno>
+#    include <fcntl.h>
+#    include <unistd.h>
+#endif
+
 namespace ov::intel_gpu::ocl::moe_otd {
 
 namespace {
+
+// Forces the file's data to stable storage. Without it a crash shortly after the rename could
+// leave the published name pointing at data that never reached the disk.
+void sync_to_disk(const std::filesystem::path& path) {
+#ifdef _WIN32
+    HANDLE handle = ::CreateFileW(path.c_str(),
+                                  GENERIC_WRITE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr,
+                                  OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL,
+                                  nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "OTD pack: cannot open for flush");
+    }
+    const BOOL flushed = ::FlushFileBuffers(handle);
+    const DWORD error = flushed ? ERROR_SUCCESS : ::GetLastError();
+    ::CloseHandle(handle);
+    if (!flushed) {
+        throw std::system_error(static_cast<int>(error), std::system_category(), "OTD pack: flush failed");
+    }
+#else
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        throw std::system_error(errno, std::generic_category(), "OTD pack: cannot open for fsync");
+    }
+    int rc = 0;
+    do {
+        rc = ::fsync(fd);
+    } while (rc != 0 && errno == EINTR);
+    const int error = rc != 0 ? errno : 0;
+    ::close(fd);
+    if (rc != 0) {
+        throw std::system_error(error, std::generic_category(), "OTD pack: fsync failed");
+    }
+#endif
+}
 
 constexpr char pack_magic[8] = {'O', 'T', 'D', 'P', 'A', 'C', 'K', '1'};
 constexpr uint64_t fnv_offset = 14695981039346656037ULL;
@@ -35,8 +87,22 @@ uint64_t fnv_u64(uint64_t hash, uint64_t value) {
     return fnv_update(hash, &value, sizeof(value));
 }
 
+uint64_t checked_add(uint64_t a, uint64_t b) {
+    if (b > std::numeric_limits<uint64_t>::max() - a) {
+        throw std::overflow_error("OTD pack: size addition overflow");
+    }
+    return a + b;
+}
+
+uint64_t checked_mul(uint64_t a, uint64_t b) {
+    if (a && b > std::numeric_limits<uint64_t>::max() / a) {
+        throw std::overflow_error("OTD pack: size multiplication overflow");
+    }
+    return a * b;
+}
+
 uint64_t align_up(uint64_t value, uint64_t alignment) {
-    return (value + alignment - 1) / alignment * alignment;
+    return checked_mul(checked_add(value, alignment - 1) / alignment, alignment);
 }
 
 uint64_t header_checksum_of(PackHeader header) {
@@ -142,15 +208,19 @@ PackLayout PackLayout::plan(const PackLayerSpec& spec) {
     for (size_t t = 0; t < pack_tensor_count; t++) {
         h.tensor_bytes[t] = spec.tensor_bytes[t];
         h.tensor_offset_in_record[t] = cursor;
-        cursor = align_up(cursor + spec.tensor_bytes[t], tensor_alignment);
+        cursor = align_up(checked_add(cursor, spec.tensor_bytes[t]), tensor_alignment);
     }
     if (cursor == 0) {
         throw std::invalid_argument("OTD pack: layer has no tensor bytes");
     }
     h.record_stride = align_up(cursor, pack_alignment);
     h.placement_offset = pack_alignment;
-    h.checksums_offset = h.placement_offset + align_up(spec.num_expert * sizeof(uint32_t), 8);
-    h.records_offset = align_up(h.checksums_offset + spec.num_expert * sizeof(uint64_t), pack_alignment);
+    h.checksums_offset = checked_add(h.placement_offset, align_up(checked_mul(spec.num_expert, sizeof(uint32_t)), 8));
+    h.records_offset = align_up(checked_add(h.checksums_offset, checked_mul(spec.num_expert, sizeof(uint64_t))), pack_alignment);
+    const auto full_size = checked_add(h.records_offset, checked_mul(spec.num_expert, h.record_stride));
+    if (full_size > static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max())) {
+        throw std::overflow_error("OTD pack: file offsets exceed stream limits");
+    }
 
     layout._placement.resize(spec.num_expert);
     for (uint32_t e = 0; e < spec.num_expert; e++) {
@@ -178,11 +248,46 @@ uint64_t PackLayout::record_offset(uint64_t expert) const {
     if (expert >= _placement.size()) {
         throw std::out_of_range("OTD pack: expert out of range");
     }
-    return _header.records_offset + static_cast<uint64_t>(_placement[expert]) * _header.record_stride;
+    return checked_add(_header.records_offset, checked_mul(static_cast<uint64_t>(_placement[expert]), _header.record_stride));
 }
 
 uint64_t PackLayout::file_size() const {
-    return _header.records_offset + _header.num_expert * _header.record_stride;
+    return checked_add(_header.records_offset, checked_mul(_header.num_expert, _header.record_stride));
+}
+
+bool PackLayout::verify_record_payload(uint32_t expert, const void* data, size_t bytes) const {
+    if (expert >= _checksums.size() || bytes != record_payload_bytes() || (bytes && !data)) {
+        return false;
+    }
+    return fnv_update(fnv_offset, data, bytes) == _checksums[expert];
+}
+
+bool PackLayout::matches_reader_snapshot(uint64_t file_bytes, const SnapshotRead& read) const {
+    if (file_bytes < file_size()) {
+        return false;
+    }
+
+    PackHeader header{};
+    read(reinterpret_cast<char*>(&header), sizeof(header), 0);
+    if (std::memcmp(&header, &_header, sizeof(header)) != 0) {
+        return false;
+    }
+
+    // The byte vectors are small (4 + 8 bytes per expert) and only allocated at
+    // configure time, never on the per-miss serving path.
+    std::vector<uint32_t> placement(_placement.size());
+    read(reinterpret_cast<char*>(placement.data()),
+         placement.size() * sizeof(uint32_t),
+         _header.placement_offset);
+    if (placement != _placement) {
+        return false;
+    }
+
+    std::vector<uint64_t> checksums(_checksums.size());
+    read(reinterpret_cast<char*>(checksums.data()),
+         checksums.size() * sizeof(uint64_t),
+         _header.checksums_offset);
+    return checksums == _checksums;
 }
 
 void PackLayout::set_placement(std::vector<uint32_t> placement) {
@@ -204,6 +309,10 @@ std::optional<PackLayout> PackLayout::open(const std::filesystem::path& path, co
         return std::nullopt;
     }
     std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        set_reason(reason, "cannot open");
+        return std::nullopt;
+    }
     PackLayout layout;
     if (!in.read(reinterpret_cast<char*>(&layout._header), sizeof(PackHeader))) {
         set_reason(reason, "truncated header");
@@ -228,7 +337,25 @@ std::optional<PackLayout> PackLayout::open(const std::filesystem::path& path, co
             return std::nullopt;
         }
     }
-    if (actual_size < layout.file_size()) {
+    // Reject impossibly small files before planning/allocating the expected layout.
+    // The configured expert count is trusted model metadata; the on-disk count is not.
+    if (expected.num_expert == 0 || expected.num_expert > UINT32_MAX ||
+        actual_size / pack_alignment < expected.num_expert) {
+        set_reason(reason, "truncated records");
+        return std::nullopt;
+    }
+    PackLayout canonical;
+    try {
+        canonical = PackLayout::plan(expected);
+    } catch (const std::exception&) {
+        set_reason(reason, "invalid expected pack layout");
+        return std::nullopt;
+    }
+    if (std::memcmp(&h, &canonical.header(), sizeof(PackHeader)) != 0) {
+        set_reason(reason, "non-canonical pack header layout");
+        return std::nullopt;
+    }
+    if (actual_size < canonical.file_size()) {
         set_reason(reason, "truncated records");
         return std::nullopt;
     }
@@ -243,6 +370,13 @@ std::optional<PackLayout> PackLayout::open(const std::filesystem::path& path, co
         return std::nullopt;
     }
     layout._placement = std::move(placement);
+    layout._checksums.resize(h.num_expert);
+    in.seekg(static_cast<std::streamoff>(h.checksums_offset));
+    if (!in.read(reinterpret_cast<char*>(layout._checksums.data()),
+                 static_cast<std::streamsize>(layout._checksums.size() * sizeof(uint64_t)))) {
+        set_reason(reason, "truncated checksum table");
+        return std::nullopt;
+    }
     return layout;
 }
 
@@ -268,6 +402,12 @@ PackBuildResult build_pack(const std::filesystem::path& dir,
     std::ostringstream tmp_name;
     tmp_name << result.path.filename().string() << ".tmp-" << std::hex << std::random_device{}() << std::random_device{}();
     const auto tmp_path = dir / tmp_name.str();
+    {
+        std::error_code ec;
+        if (std::filesystem::exists(std::filesystem::symlink_status(tmp_path, ec))) {
+            throw std::runtime_error("OTD pack: temporary name already in use: " + tmp_path.filename().string());
+        }
+    }
 
     std::vector<uint64_t> checksums(spec.num_expert, 0);
     try {
@@ -317,6 +457,7 @@ PackBuildResult build_pack(const std::filesystem::path& dir,
             throw std::runtime_error("OTD pack: write failed for " + tmp_path.string());
         }
         out.close();
+        sync_to_disk(tmp_path);
         result.bytes_written += layout.header().records_offset;
     } catch (...) {
         std::error_code ec;
@@ -324,14 +465,31 @@ PackBuildResult build_pack(const std::filesystem::path& dir,
         throw;
     }
 
+    // Publish with a single rename and never delete the destination first, so readers see either
+    // the previous file or the complete new one. POSIX rename() replaces atomically. On Windows
+    // std::filesystem::rename replaces via MoveFileExW(MOVEFILE_REPLACE_EXISTING), which fails while
+    // any process holds the destination open without FILE_SHARE_DELETE (ov::util readers do).
+    // rename() replaces a symlink or reparse point at the destination; it never writes through it.
     std::error_code ec;
-    std::filesystem::remove(result.path, ec);
     std::filesystem::rename(tmp_path, result.path, ec);
     if (ec) {
-        // A concurrent builder may have published the same content first.
-        std::filesystem::remove(tmp_path);
-        if (!PackLayout::open(result.path, spec)) {
-            throw std::runtime_error("OTD pack: cannot publish " + result.path.string() + ": " + ec.message());
+        std::error_code ignored;
+        std::filesystem::remove(tmp_path, ignored);
+        // A concurrent builder may have published the same content first. Accept the destination
+        // only if it is exactly what this call would have produced.
+        std::string reason;
+        const auto existing = PackLayout::open(result.path, spec, &reason);
+        bool usable = existing.has_value();
+        if (usable && !placement.empty() && existing->placement() != placement) {
+            usable = false;
+            reason = "different placement";
+        }
+        if (usable && verify_pack(result.path, spec, &reason) != 0) {
+            usable = false;
+        }
+        if (!usable) {
+            throw std::runtime_error("OTD pack: cannot publish " + result.path.filename().string() + ": " + ec.message() +
+                                     "; destination left unchanged (" + reason + ")");
         }
         result.reused_existing = true;
     }
@@ -344,17 +502,13 @@ uint64_t verify_pack(const std::filesystem::path& path, const PackLayerSpec& spe
         return spec.num_expert == 0 ? 1 : spec.num_expert;
     }
     std::ifstream in(path, std::ios::binary);
-    std::vector<uint64_t> checksums(spec.num_expert);
-    in.seekg(static_cast<std::streamoff>(layout->header().checksums_offset));
-    in.read(reinterpret_cast<char*>(checksums.data()), static_cast<std::streamsize>(checksums.size() * sizeof(uint64_t)));
-
     const uint64_t payload = layout->record_payload_bytes();
     std::vector<uint8_t> record(payload);
     uint64_t corrupt = 0;
     for (uint64_t e = 0; e < spec.num_expert; e++) {
         in.seekg(static_cast<std::streamoff>(layout->record_offset(e)));
         if (!in.read(reinterpret_cast<char*>(record.data()), static_cast<std::streamsize>(payload)) ||
-            fnv_update(fnv_offset, record.data(), payload) != checksums[e]) {
+            !layout->verify_record_payload(static_cast<uint32_t>(e), record.data(), record.size())) {
             corrupt++;
             in.clear();
         }

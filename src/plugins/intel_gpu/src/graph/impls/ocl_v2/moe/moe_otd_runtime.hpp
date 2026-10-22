@@ -35,6 +35,10 @@ struct OtdPerfSnapshot {
     uint64_t batched_fallbacks = 0;
     uint64_t grouped_fallbacks = 0;
     uint64_t created_onednn_kernels = 0;
+    // CPU time spent checksumming pack records after the read, and records accepted / rejected.
+    uint64_t pack_verify_ns = 0;
+    uint64_t pack_verified_records = 0;
+    uint64_t pack_verify_failures = 0;
     uint64_t disk_read_p50_us = 0;
     uint64_t disk_read_p95_us = 0;
     uint64_t disk_read_p99_us = 0;
@@ -57,6 +61,9 @@ struct OtdPerfCounters {
     std::atomic<uint64_t> batched_fallbacks{0};
     std::atomic<uint64_t> grouped_fallbacks{0};
     std::atomic<uint64_t> created_onednn_kernels{0};
+    std::atomic<uint64_t> pack_verify_ns{0};
+    std::atomic<uint64_t> pack_verified_records{0};
+    std::atomic<uint64_t> pack_verify_failures{0};
     LatencyHistogram disk_read_latency;
 
     void record_load(const ExpertLoadStats& load);
