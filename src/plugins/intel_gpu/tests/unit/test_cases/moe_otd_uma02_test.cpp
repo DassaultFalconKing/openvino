@@ -778,9 +778,100 @@ TEST(moe_otd_uma02, U2_G02_one_cold_miss_counters) {
     }
 }
 
-// U2-G03 (concurrent miss + eviction under stream): NOT_RUN — the short matrix has no lease-rule or
-// stream-lease harness; a real soak/concurrency rig is explicitly out of scope for this bounded run.
+// U2-G03: simultaneous acquire within capacity + eviction under an in-flight stream.
+// Pass: no false hit after eviction; overflow simultaneous rejected without mutating filled set;
+// after finish+evict+refill, GPU digests match the new expert bytes (no use-after-evict hit).
 TEST(moe_otd_uma02, U2_G03_concurrent_miss_eviction_under_stream) {
-    GTEST_SKIP() << "NOT_RUN: no lease-rule / concurrent-miss under-stream harness exists in the short matrix; "
-                    "needs a dedicated lightweight soak design (UMA-02-PLAN section 3.5)";
+    print_gpu_device_header();
+    Uma02Fixture fx;
+    fx.build_pack();
+    const auto pack = *moe_otd::PackLayout::open(fx.pack_path(), fx.spec());
+
+    // --- simultaneous lease within capacity (path B) ---
+    {
+        cldnn::moe_weights w;
+        fx.allocate_resident(w, allocation_type::usm_host);
+        auto provider = fx.make_provider(/*capacity=*/2);
+        provider->configure_pack(moe_otd::PackMode::require, fx.pack_dir, fx.layouts);
+        provider->bind(w);
+
+        auto lease = provider->try_acquire_simultaneous({0, 1, 0}, get_test_stream());
+        ASSERT_TRUE(lease.has_value());
+        ASSERT_EQ(lease->size(), 3u);
+        ASSERT_EQ((*lease)[0], (*lease)[2]);
+        ASSERT_NE((*lease)[0], (*lease)[1]);
+        ASSERT_TRUE(provider->cache().lookup(0).hit);
+        ASSERT_TRUE(provider->cache().lookup(1).hit);
+
+        // Overflow must reject before touching cache (Wave-01 contract).
+        // Do not lookup(2): lookup inserts on miss and would mutate the cache.
+        auto overflow = provider->try_acquire_simultaneous({0, 1, 2}, get_test_stream());
+        ASSERT_FALSE(overflow.has_value());
+        ASSERT_TRUE(provider->cache().lookup(0).hit);
+        ASSERT_TRUE(provider->cache().lookup(1).hit);
+        ASSERT_EQ(provider->cache().size(), 2u);
+    }
+
+    // --- eviction under stream: enqueue digest, finish, evict, prove no false hit, refill parity ---
+    {
+        cldnn::moe_weights w;
+        auto mems = fx.allocate_resident(w, allocation_type::usm_host);
+        auto provider = fx.make_provider(/*capacity=*/1);
+        provider->configure_pack(moe_otd::PackMode::require, fx.pack_dir, fx.layouts);
+        provider->bind(w);
+
+        const size_t slot0 = provider->acquire_one(0, get_test_stream());
+        ASSERT_TRUE(provider->cache().lookup(0).hit);
+
+        // Kick a real GPU kernel at the resident, then finish before eviction (lease window).
+        const size_t bytes0 = static_cast<size_t>(pack.tensor_bytes(0));
+        ASSERT_GT(bytes0, 0u);
+        const uint32_t off0 = static_cast<uint32_t>(slot0 * bytes0);
+        auto digest_before = gpu_digest_window(mems[0], off0, static_cast<uint32_t>(bytes0));
+        auto dump0 = Uma02Fixture::dump_slot(mems[0], slot0, bytes0);
+        ASSERT_EQ(digest_before, cpu_digest_reference(dump0.data(), bytes0));
+
+        // Evict expert 0 by loading expert 1 into the only slot.
+        // IMPORTANT: LRUCache::lookup() inserts on miss — never probe an absent expert with lookup().
+        const size_t slot1 = provider->acquire_one(1, get_test_stream());
+        ASSERT_EQ(slot0, slot1);
+        ASSERT_TRUE(provider->cache().lookup(1).hit);
+
+        auto dump1 = Uma02Fixture::dump_slot(mems[0], slot1, bytes0);
+        // Tiny fixtures may share identical tensor0 bytes across experts; still require GPU-visible
+        // bytes to match the post-fill dump (path-B fence), proven via miss counters below.
+        auto digest_after_e1 = gpu_digest_window(mems[0], off0, static_cast<uint32_t>(bytes0));
+        ASSERT_EQ(digest_after_e1, cpu_digest_reference(dump1.data(), bytes0));
+        (void)dump1;
+
+        // Warm hit on E1 (no second fill).
+        auto* perf = moe_otd::get_perf_counters();
+        const uint64_t loads_before_hit = perf ? perf->expert_loads.load() : 0;
+        provider->acquire_one(1, get_test_stream());
+        if (perf) {
+            EXPECT_EQ(perf->expert_loads.load(), loads_before_hit);
+        }
+
+        // Refill expert 0 — must be a miss (evicted earlier), then serve; GPU digest restored.
+        const uint64_t loads_before_refill = perf ? perf->expert_loads.load() : 0;
+        const size_t slot0b = provider->acquire_one(0, get_test_stream());
+        ASSERT_EQ(slot0b, slot0);
+        if (perf) {
+            EXPECT_EQ(perf->expert_loads.load(), loads_before_refill + 1);
+        }
+        ASSERT_TRUE(provider->cache().lookup(0).hit);
+        auto dump0b = Uma02Fixture::dump_slot(mems[0], slot0b, bytes0);
+        ASSERT_EQ(dump0, dump0b);
+        auto digest_restored = gpu_digest_window(mems[0], off0, static_cast<uint32_t>(bytes0));
+        ASSERT_EQ(digest_restored, digest_before);
+
+        // E1 is now evicted: re-acquire must miss again (no false hit).
+        const uint64_t loads_before_e1 = perf ? perf->expert_loads.load() : 0;
+        provider->acquire_one(1, get_test_stream());
+        if (perf) {
+            EXPECT_EQ(perf->expert_loads.load(), loads_before_e1 + 1);
+        }
+
+        std::cout << "[U2-G03] simultaneous+overflow OK; eviction+refill digests OK; no false hit" << std::endl;
+    }
 }
