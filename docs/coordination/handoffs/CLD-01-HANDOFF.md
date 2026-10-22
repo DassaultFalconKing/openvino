@@ -1,6 +1,6 @@
 # CLD-01-HANDOFF — Expert Pack Integrity (Cloud Wave 01)
 
-**Status:** `IMPLEMENTED_NOT_RUN`; Draft PR https://github.com/DassaultFalconKing/openvino/pull/1. This cloud-only delivery is **not** GPU acceptance, OpenVINO build certification or permission to merge.
+**Status:** `STATIC_CHECK_PASS` on five implementation/test translation units, and `UNIT_PASS (standalone Windows harness)` for `moe_otd_pack.*` 15/15 (according to the code author's receipts). This is **not** a full OpenVINO build or GPU acceptance. Draft PR https://github.com/DassaultFalconKing/openvino/pull/1; `ov_gpu_unit_tests`, provider GPU tests and Arc acceptance are **NOT_RUN**, no permission to merge.
 
 ## 1. Source locks / identity
 
@@ -62,7 +62,7 @@ FNV-1a-64 is a serial xor+multiply chain, roughly 4 cycles/byte, i.e. about 0.8 
 | `tests/unit/test_cases/moe_offload_pack_test.cpp` | 0 |
 | `tests/unit/test_cases/moe_offload_weight_provider_test.cpp` | 0 |
 
-The two test TUs used an approximated include set (gtest, gmock, `tests/unit`, graph include dirs), because unit tests were not configured in that build. Their only warnings (C4244 in `test_utils.h:613` and `xutility`) also appear on the unmodified base file. This is **not** `BUILD PASS`: no linking, template instantiation in other TUs, GCC/Clang or Linux checks. `UNIT` tests: `NOT_RUN`.
+The two test TUs used an approximated include set (gtest, gmock, `tests/unit`, graph include dirs), because unit tests were not configured in that build. Their only warnings (C4244 in `test_utils.h:613` and `xutility`) also appear on the unmodified base file. This is **not** `BUILD PASS`: no linking, template instantiation in other TUs, GCC/Clang or Linux checks. `moe_otd_pack.*`: **15/15 UNIT_PASS in the author's separate Windows host-only standalone gtest harness (exit 0)**; the full `ov_gpu_unit_tests` binary and the four provider real-GPU tests are **NOT_RUN**. Do not confuse host-only receipts with linked/plugin/GPU acceptance.
 
 ### Remaining local verification (NOT RUN by the author)
 

@@ -1,6 +1,6 @@
 # CLOUD-WAVE-01-STATE — 2026-10-22
 
-**Evidence class:** CLOUD CODE AUTHORING with Windows host-only checks (MSVC 14.44 `/Zs` syntax checks, a standalone gtest harness without GPU, Python `unittest`). `ACCEPTED=NO`. No GPU, inference, benchmark or Linux run took place; operator-controlled GPU testing remains paused. No PR is merged; all three are Drafts.
+**Evidence class:** CLOUD CODE AUTHORING with Windows host-only checks (MSVC 14.44 `/Zs` syntax checks, a standalone gtest harness without GPU, Python `unittest`). `ACCEPTED=NO`. No GPU, inference, benchmark or Linux run took place; operator-controlled GPU testing remains paused. No PR is merged; CLD-01/02/03 and both follow-up PRs remain Drafts.
 
 ## Source locks
 
@@ -83,3 +83,21 @@ No CLD-04 scheduler PR and no scheduler ADR was written in this session. No cach
 5. **Benchmarks:** cost of the CLD-01 per-miss checksum (`pack_verify_ns` against read time), CLD-02 build-mode wall time, CLD-03 traced-run overhead, and physical NVMe bytes from an OS counter recorded in an `otd_run_meta v1` sidecar.
 6. **Tuning:** only after the benchmarks, for example checksum strategy or the Windows `cannot open` retry decision, each as a separate reviewed change.
 7. **Integration:** OVMS integration and any promotion only after steps 1-6 pass with receipts; never by automatic merge.
+
+## Post-review follow-ups (isolated Draft PRs)
+
+| Task | Draft PR | Base lock | Current authored source head | Evidence | Purpose |
+|---|---|---|---|---|---|
+| CLD-01B | [#4](https://github.com/DassaultFalconKing/openvino/pull/4) | CLD-01 HEAD `f288a5b90f8011eb73c5aab3409108c05b313237` | `20cf30f7082b490d70f0f4c6779aa05aef2ed662` | `IMPLEMENTED_NOT_RUN` | Force-open and pin serving `ParallelWeightReader`; compare header, placement and checksum snapshot on that same handle; zero new per-miss disk reads |
+| CLD-03B | [#5](https://github.com/DassaultFalconKing/openvino/pull/5) | CLD-03 HEAD `4e8fa732151e1169aa58faa9a5732f2b021d5b16` | `2646ae60223d2ba4a7f36b49813641bff4399995` | `IMPLEMENTED_NOT_RUN` | Add `trace_integrity.policy_evidence_eligible` gate; preserve v1, exact LRU and CLI exit-code semantics |
+
+Local instructions: `docs/coordination/handoffs/CLD-01B-HANDOFF.md` in #4 and `docs/coordination/handoffs/CLD-03B-HANDOFF.md` in #5.
+
+### Residual engineering decisions, not masked by passing standalone tests
+
+1. **CLD-02 Windows concurrent publication:** the tester's 2 transient `cannot open` observations remain real. No blind retry/sleep was added in this wave. Until local acceptance, prebuild immutable packs in a dedicated directory and keep builders away from active `require` readers. Decide on a bounded configure-only retry after an explicit Windows race fixture and latency budget. The temp-name check-then-open TOCTOU and stale temp files are also not fixed.
+2. **CLD-01 checksum cost:** theoretical ~1.7 ms per 2 MiB serial FNV pass is NOT a benchmark. New `pack_verify_ns` counters require Arc 140V comparison against logical I/O and **OS-measured physical NVMe** bytes; no alternative hash or pack-v2 change before the evidence.
+3. **CLD-03 failed miss:** `incomplete` comment records still lack a failed expert's exact cache mutation. #5 makes these traces ineligible for scheduler-policy evidence instead of fabricating a replay event. Future proper failed-read trace instrumentation needs a separate C++ source/runtime-review patch.
+4. **Acceptance STOP:** even a conflict-free synthetic merge and Windows host-only tests do not prove the exact combined GPU plugin builds/serves. Run full OpenVINO unit target, required-mode corruption/provider GPU negatives and Windows/Linux races before any integration or production promotion.
+
+**Merge/review dependencies:** #1 → #4; #2 independently reviewed, then rebased/tested against #1+#4 for serving correctness; #3 → #5. The resulting combined code must undergo its own native build. Original source `479219245f6f10...`, OVMS integration and golden C6 remain read-only.
