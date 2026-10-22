@@ -40,6 +40,9 @@ OtdPerfSnapshot OtdPerfCounters::snapshot() const {
     s.batched_fallbacks = batched_fallbacks.load(std::memory_order_relaxed);
     s.grouped_fallbacks = grouped_fallbacks.load(std::memory_order_relaxed);
     s.created_onednn_kernels = created_onednn_kernels.load(std::memory_order_relaxed);
+    s.pack_verify_ns = pack_verify_ns.load(std::memory_order_relaxed);
+    s.pack_verified_records = pack_verified_records.load(std::memory_order_relaxed);
+    s.pack_verify_failures = pack_verify_failures.load(std::memory_order_relaxed);
     s.disk_read_p50_us = disk_read_latency.quantile_upper_bound_us(0.50);
     s.disk_read_p95_us = disk_read_latency.quantile_upper_bound_us(0.95);
     s.disk_read_p99_us = disk_read_latency.quantile_upper_bound_us(0.99);
@@ -62,6 +65,9 @@ void OtdPerfCounters::dump() const {
     std::cerr << "[OTD_PERF] expert_loads=" << s.expert_loads << ", evictions=" << s.evictions << ", disk_read_bytes=" << s.disk_read_bytes
                    << ", disk_reads=" << s.disk_reads << ", total_transpose_ms=" << s.transpose_ns / 1000000 << ", disk_read_p50_us<=" << s.disk_read_p50_us
                    << ", disk_read_p95_us<=" << s.disk_read_p95_us << ", disk_read_p99_us<=" << s.disk_read_p99_us << std::endl;
+    std::cerr << "[OTD_PERF] pack_verified_records=" << s.pack_verified_records << ", pack_verify_failures=" << s.pack_verify_failures
+              << ", total_pack_verify_ms=" << s.pack_verify_ns / 1000000
+              << ", avg_pack_verify_us=" << (s.pack_verified_records > 0 ? s.pack_verify_ns / 1000 / s.pack_verified_records : 0) << std::endl;
 }
 
 OtdPerfCounters* get_perf_counters() {
@@ -375,15 +381,35 @@ void fill_weights_from_pack(cldnn::stream& exec_stream,
     const bool timed = perf != nullptr || stats != nullptr;
     using clock = std::chrono::steady_clock;
 
+    // Every resident tensor is checked before the read so that a layout mismatch can never
+    // leave a slot with some tensors from the new expert and some from the evicted one.
+    for (size_t t = 0; t < pack_tensor_count; t++) {
+        const uint64_t size = pack.tensor_bytes(t);
+        const auto& mem = tensors[t];
+        if (size == 0 || !mem) {
+            continue;
+        }
+        const uint64_t resident_bytes = mem->get_layout().bytes_count();
+        OPENVINO_ASSERT(resident_bytes / pack.num_expert() == size, "OTD pack: tensor size differs from the resident layout");
+        OPENVINO_ASSERT(slot < resident_bytes / size, "OTD pack: resident slot ", slot, " out of range for tensor ", t);
+    }
+
     ExpertLoadStats load;
     const auto t0 = timed ? clock::now() : clock::time_point{};
     auto t1 = clock::time_point{};
-    read_verified_record(pack, expert, staging, [&](char* data, size_t size, uint64_t offset) {
-        pack_reader.read(data, size, offset);
-        if (timed) {
-            t1 = clock::now();
+    try {
+        read_verified_record(pack, expert, staging, [&](char* data, size_t size, uint64_t offset) {
+            pack_reader.read(data, size, offset);
+            if (timed) {
+                t1 = clock::now();
+            }
+        });
+    } catch (const PackIntegrityError&) {
+        if (perf) {
+            perf->pack_verify_failures.fetch_add(1, std::memory_order_relaxed);
         }
-    });
+        throw;
+    }
     // Verify happens on the existing staging buffer; no second read or GPU copy
     // occurs on a bad checksum. Keep checksum CPU time outside GPU-copy timing.
     const auto t2 = timed ? clock::now() : clock::time_point{};
@@ -394,10 +420,14 @@ void fill_weights_from_pack(cldnn::stream& exec_stream,
         if (size == 0 || !mem) {
             continue;
         }
-        OPENVINO_ASSERT(mem->get_layout().bytes_count() / pack.num_expert() == size, "OTD pack: tensor size differs from the resident layout");
         mem->copy_from(exec_stream, staging.data() + pack.tensor_offset_in_record(t), 0, slot * size, size, true);
     }
 
+    if (perf) {
+        perf->pack_verify_ns.fetch_add(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count()),
+                                       std::memory_order_relaxed);
+        perf->pack_verified_records.fetch_add(1, std::memory_order_relaxed);
+    }
     if (timed) {
         load.bytes = staging.size();
         load.reads = 1;

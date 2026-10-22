@@ -322,7 +322,7 @@ TEST(moe_otd_pack, serving_read_validates_logical_expert_before_gpu_copy) {
         const auto offset = pack->record_offset(e) + pack->tensor_offset_in_record(0);
         flip_byte(built.path, offset);
         const auto before = reads;
-        EXPECT_THROW(serving_read(*pack, built.path, e, reads), std::runtime_error);
+        EXPECT_THROW(serving_read(*pack, built.path, e, reads), PackIntegrityError);
         EXPECT_EQ(reads, before + 1);
         flip_byte(built.path, offset);
     }
@@ -341,7 +341,7 @@ TEST(moe_otd_pack, serving_read_rejects_corrupt_checksum_and_truncated_record) {
     const auto changed_table = PackLayout::open(built.path, spec);
     ASSERT_TRUE(changed_table.has_value());
     size_t reads = 0;
-    EXPECT_THROW(serving_read(*changed_table, built.path, 2, reads), std::runtime_error);
+    EXPECT_THROW(serving_read(*changed_table, built.path, 2, reads), PackIntegrityError);
     EXPECT_EQ(reads, 1U);
     EXPECT_NO_THROW(serving_read(*changed_table, built.path, 3, reads));
 

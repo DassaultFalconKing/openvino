@@ -128,10 +128,18 @@ private:
     std::vector<uint64_t> _checksums;
 };
 
+// A record whose bytes do not match the checksum stored for its logical expert. Distinct from
+// I/O errors so callers can count and report integrity rejections separately.
+class PackIntegrityError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 // The serving read boundary: one positional read, then checksum the staging bytes
 // before any caller is allowed to copy them to a resident GPU slot. Reader must
 // throw on short reads. Kept header-only to preserve a direct, allocation-free
 // invocation with ParallelWeightReader and with an offline test reader.
+// Throws PackIntegrityError on mismatch; `staging` then holds rejected bytes that must not be used.
 template <typename Reader>
 void read_verified_record(const PackLayout& pack, uint32_t expert, std::vector<uint8_t>& staging, Reader&& reader) {
     const auto payload = pack.record_payload_bytes();
@@ -139,9 +147,11 @@ void read_verified_record(const PackLayout& pack, uint32_t expert, std::vector<u
         throw std::length_error("OTD pack: expert record exceeds staging capacity");
     }
     staging.resize(static_cast<size_t>(payload));
-    reader(reinterpret_cast<char*>(staging.data()), staging.size(), pack.record_offset(expert));
+    const auto offset = pack.record_offset(expert);
+    reader(reinterpret_cast<char*>(staging.data()), staging.size(), offset);
     if (!pack.verify_record_payload(expert, staging.data(), staging.size())) {
-        throw std::runtime_error("OTD pack: checksum mismatch for expert " + std::to_string(expert));
+        throw PackIntegrityError("OTD pack: checksum mismatch for expert " + std::to_string(expert) + " (record position " +
+                                 std::to_string(pack.placement()[expert]) + ", " + std::to_string(staging.size()) + " payload bytes)");
     }
 }
 
