@@ -41,6 +41,33 @@ OffloadExpertWeightProvider::OffloadExpertWeightProvider(size_t capacity,
     }
 }
 
+void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const std::filesystem::path& dir, const moe_otd::RoutedTensorLayouts& layouts) {
+    _pack.reset();
+    _pack_reader.reset();
+    if (mode == moe_otd::PackMode::off) {
+        return;
+    }
+    OPENVINO_ASSERT(!dir.empty(), "MoE OTD pack mode requires GPU_MOE_OTD_PACK_DIR");
+
+    const auto spec = moe_otd::make_pack_spec(_config, _weight_bin_offsets, layouts, _weight_reader);
+    const auto path = dir / spec.file_name();
+    if (mode == moe_otd::PackMode::build) {
+        const auto built = moe_otd::build_layer_pack(dir, spec, _config, layouts, _weight_reader);
+        GPU_DEBUG_INFO << "MOE OTD pack " << (built.reused_existing ? "reused " : "built ") << built.path.filename().string()
+                       << " bytes=" << built.bytes_written << std::endl;
+    }
+
+    std::string reason;
+    auto pack = moe_otd::PackLayout::open(path, spec, &reason);
+    if (!pack) {
+        OPENVINO_ASSERT(mode != moe_otd::PackMode::require, "MoE OTD pack ", path.filename().string(), " is unusable: ", reason);
+        GPU_DEBUG_INFO << "MOE OTD pack " << path.filename().string() << " unusable (" << reason << "), streaming from weights file" << std::endl;
+        return;
+    }
+    _pack = std::move(pack);
+    _pack_reader = std::make_unique<moe_otd::ParallelWeightReader>(path);
+}
+
 void OffloadExpertWeightProvider::bind(cldnn::moe_weights& resident) {
     _resident = &resident;
     _cache->set_initialized();
@@ -82,7 +109,11 @@ LRUCache::Lookup OffloadExpertWeightProvider::acquire_slot(uint32_t expert, cldn
             }
         }
         OPENVINO_ASSERT(_resident != nullptr, "OffloadExpertWeightProvider: resident buffers not bound");
-        moe_otd::fill_weights_memory(stream, _config, _weight_bin_offsets, _weight_reader, *_resident, {expert}, {item.slot}, trace ? &load : nullptr);
+        if (_pack) {
+            moe_otd::fill_weights_from_pack(stream, *_pack, *_pack_reader, *_resident, expert, item.slot, _pack_staging, trace ? &load : nullptr);
+        } else {
+            moe_otd::fill_weights_memory(stream, _config, _weight_bin_offsets, _weight_reader, *_resident, {expert}, {item.slot}, trace ? &load : nullptr);
+        }
         _cache->set_filled(item.slot);
     }
 

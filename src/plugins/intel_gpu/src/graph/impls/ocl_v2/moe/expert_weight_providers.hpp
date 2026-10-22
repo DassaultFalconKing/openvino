@@ -83,6 +83,15 @@ public:
     std::optional<ExpertSlotLease> try_acquire_simultaneous(const std::vector<uint32_t>& experts, cldnn::stream& stream) override;
     size_t acquire_one(uint32_t expert, cldnn::stream& stream) override;
 
+    // Selects pre-packed expert loading for this layer. `layouts` are the logical all-expert
+    // layouts of the nine routed tensors in serialized offset order. Mode `use` falls back to
+    // the weights file when no valid pack exists, `require` throws, `build` writes a missing pack.
+    void configure_pack(moe_otd::PackMode mode, const std::filesystem::path& dir, const moe_otd::RoutedTensorLayouts& layouts);
+
+    bool uses_pack() const {
+        return _pack.has_value();
+    }
+
     LRUCache& cache() {
         return *_cache;
     }
@@ -101,6 +110,9 @@ private:
     std::filesystem::path _weights_path;
     std::shared_ptr<LRUCache> _cache;
     moe_otd::ParallelWeightReader _weight_reader;
+    std::optional<moe_otd::PackLayout> _pack;
+    std::unique_ptr<moe_otd::ParallelWeightReader> _pack_reader;
+    std::vector<uint8_t> _pack_staging;
     cldnn::moe_weights* _resident = nullptr;
     bool _bound = false;
 };
