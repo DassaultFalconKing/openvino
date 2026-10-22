@@ -4,6 +4,7 @@
 
 #include "expert_weight_providers.hpp"
 
+#include <iostream>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -53,15 +54,16 @@ void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const s
     const auto path = dir / spec.file_name();
     if (mode == moe_otd::PackMode::build) {
         const auto built = moe_otd::build_layer_pack(dir, spec, _config, layouts, _weight_reader);
-        GPU_DEBUG_INFO << "MOE OTD pack " << (built.reused_existing ? "reused " : "built ") << built.path.filename().string()
-                       << " bytes=" << built.bytes_written << std::endl;
+        // Layers compile on parallel threads; one write per line keeps messages from interleaving.
+        std::cerr << ("MOE OTD pack " + std::string(built.reused_existing ? "reused " : "built ") + built.path.filename().string() +
+                      " bytes=" + std::to_string(built.bytes_written) + "\n");
     }
 
     std::string reason;
     auto pack = moe_otd::PackLayout::open(path, spec, &reason);
     if (!pack) {
         OPENVINO_ASSERT(mode != moe_otd::PackMode::require, "MoE OTD pack ", path.filename().string(), " is unusable: ", reason);
-        GPU_DEBUG_INFO << "MOE OTD pack " << path.filename().string() << " unusable (" << reason << "), streaming from weights file" << std::endl;
+        std::cerr << ("MOE OTD pack " + path.filename().string() + " unusable (" + reason + "), streaming from weights file\n");
         return;
     }
     _pack = std::move(pack);

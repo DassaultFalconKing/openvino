@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <limits>
 
 #include "intel_gpu/runtime/debug_configuration.hpp"
@@ -45,18 +46,20 @@ OtdPerfSnapshot OtdPerfCounters::snapshot() const {
     return s;
 }
 
+// Counters exist only when MOE_OTD_PERF_LOG is set, so the summary goes to stderr rather than the
+// debug-caps log, which is compiled out of release builds.
 void OtdPerfCounters::dump() const {
     const auto s = snapshot();
     const auto total = s.gpu_hits + s.gpu_misses;
     const auto loads = s.tensor_load_count;
-    GPU_DEBUG_INFO << "[OTD_PERF] gpu_hits=" << s.gpu_hits << ", gpu_misses=" << s.gpu_misses
+    std::cerr << "[OTD_PERF] gpu_hits=" << s.gpu_hits << ", gpu_misses=" << s.gpu_misses
                    << ", gpu_hit_rate=" << (total > 0 ? 100.0 * s.gpu_hits / total : 0.0) << "%"
                    << ", tensor_loads=" << loads << ", avg_disk_io_us=" << (loads > 0 ? s.disk_io_ns / 1000 / loads : 0)
                    << ", avg_transpose_us=" << (loads > 0 ? s.transpose_ns / 1000 / loads : 0)
                    << ", avg_gpu_copy_us=" << (loads > 0 ? s.gpu_copy_ns / 1000 / loads : 0) << ", total_disk_io_ms=" << s.disk_io_ns / 1000000
                    << ", total_gpu_copy_ms=" << s.gpu_copy_ns / 1000000 << ", batched_fallbacks=" << s.batched_fallbacks
                    << ", grouped_fallbacks=" << s.grouped_fallbacks << ", created_onednn_kernels=" << s.created_onednn_kernels << std::endl;
-    GPU_DEBUG_INFO << "[OTD_PERF] expert_loads=" << s.expert_loads << ", evictions=" << s.evictions << ", disk_read_bytes=" << s.disk_read_bytes
+    std::cerr << "[OTD_PERF] expert_loads=" << s.expert_loads << ", evictions=" << s.evictions << ", disk_read_bytes=" << s.disk_read_bytes
                    << ", disk_reads=" << s.disk_reads << ", total_transpose_ms=" << s.transpose_ns / 1000000 << ", disk_read_p50_us<=" << s.disk_read_p50_us
                    << ", disk_read_p95_us<=" << s.disk_read_p95_us << ", disk_read_p99_us<=" << s.disk_read_p99_us << std::endl;
 }
