@@ -16,3 +16,7 @@ WINDOWS_ACCEPTED_WITH_RESTRICTIONS (host-only; GPU gates open).
 
 ## Single next action for OVMS integrator
 Pin review to this Draft PR HEAD; do not enable production OVMS OTD pack paths or claim GPU acceptance until COMPUTE_GO and Arc live gates PASS on this SHA.
+
+## Final evidence commit
+- Evidence/docs commit: `f82fbaaad1efafbcadd9cc5f513bd3a8409b3cfd`
+
