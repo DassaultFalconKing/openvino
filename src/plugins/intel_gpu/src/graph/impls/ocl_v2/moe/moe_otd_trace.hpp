@@ -66,9 +66,19 @@ enum class AcquireKind : char { simultaneous = 'S', one = 'O' };
 // E records describe every expert the cache processed for call <call>. An overflowing
 // simultaneous call is rejected before the cache is touched and therefore has no E records.
 // Timestamps are steady-clock nanoseconds since the writer was opened. No prompt data is recorded.
+// <bytes> and <reads> are logical: what the plugin asked to read, not what the device transferred.
+//
+// close() appends completeness records as '#' comment lines, which v1 readers skip:
+//   # incomplete C,<call>,<t_ns>,<layer>,<kind>,<routed>,incomplete,<unique experts>
+//   # incomplete E,...                       (same fields as E)
+//   # end,calls=<C records>,experts=<E records>,incomplete_calls=<n>,incomplete_experts=<n>
+// An incomplete call was begun but never ended, e.g. because loading an expert threw; its expert
+// records still changed the cache. A trace without the end record was not closed (killed process,
+// or the writer is still open) and may be missing its tail.
 class TraceWriter {
 public:
     explicit TraceWriter(std::unique_ptr<std::ostream> out);
+    // Calls close().
     ~TraceWriter();
 
     TraceWriter(const TraceWriter&) = delete;
@@ -83,6 +93,10 @@ public:
 
     void flush();
 
+    // Writes pending calls as incomplete, then the end record, and flushes. Idempotent; records
+    // arriving afterwards are dropped so nothing follows the end record.
+    void close();
+
 private:
     uint64_t now_ns() const;
 
@@ -96,12 +110,18 @@ private:
         std::vector<std::string> expert_lines;
     };
 
+    // Requires _mutex and _out. Writes the C record and its E records, each prefixed with `prefix`.
+    void write_call_unlocked(const PendingCall& call, std::string_view status, std::string_view prefix);
+
     std::mutex _mutex;
     std::unique_ptr<std::ostream> _out;
     uint32_t _next_layer = 0;
     uint64_t _next_call = 0;
     std::vector<PendingCall> _pending;
     int64_t _origin_ns = 0;
+    bool _closed = false;
+    uint64_t _calls_written = 0;
+    uint64_t _experts_written = 0;
 };
 
 // Returns the process-wide trace writer when MOE_OTD_TRACE=<file> is set, otherwise nullptr.
