@@ -32,9 +32,15 @@ Post-scatter `flush`+`finish` alone does **not** prove prior GPU readers of a re
 
 ## Phases 4–5
 
-**Not entered this session** — plan requires Phase 3 PASS **and** operator confirmation for real-size GEMM then OVMS C1/C2/C4. Status: `NOT_RUN` (authorized next).
+**Entered after operator GO.** Full packet: [`../P0B-PHASE45-20261022/VERDICT.md`](../P0B-PHASE45-20261022/VERDICT.md).
+
+| Gate | Result |
+|---|---|
+| Phase 4 ornith-scale GEMM/GEMV A/B | **PASS** — mean steady B/A p50 ≈ 0.87; cold B/A ≈ 0.79 → **not** `B_PERF_REJECTED` |
+| Phase 5 short OVMS C1/C2/C4 @ ratio 20 | **`MODEL_PASS`** — A and B 1/1 · 2/2 · 4/4; no fatal/OOM |
+| Sub-verdict | **`B_SAFE_FOR_MODEL_AB`** (kept) |
 
 ## Evidence
 
-- Repo docs: this directory  
-- Local: `C:\gm\orchestration\p0b-inflight-20261022\evidence\`
+- Repo docs: this directory + `../P0B-PHASE45-20261022/`  
+- Local: `C:\gm\orchestration\p0b-inflight-20261022\evidence\` + `...\phase4-5\`
