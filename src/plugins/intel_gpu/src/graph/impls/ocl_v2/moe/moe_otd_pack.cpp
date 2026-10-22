@@ -211,6 +211,34 @@ bool PackLayout::verify_record_payload(uint32_t expert, const void* data, size_t
     return fnv_update(fnv_offset, data, bytes) == _checksums[expert];
 }
 
+bool PackLayout::matches_reader_snapshot(uint64_t file_bytes, const SnapshotRead& read) const {
+    if (file_bytes < file_size()) {
+        return false;
+    }
+
+    PackHeader header{};
+    read(reinterpret_cast<char*>(&header), sizeof(header), 0);
+    if (std::memcmp(&header, &_header, sizeof(header)) != 0) {
+        return false;
+    }
+
+    // The byte vectors are small (4 + 8 bytes per expert) and only allocated at
+    // configure time, never on the per-miss serving path.
+    std::vector<uint32_t> placement(_placement.size());
+    read(reinterpret_cast<char*>(placement.data()),
+         placement.size() * sizeof(uint32_t),
+         _header.placement_offset);
+    if (placement != _placement) {
+        return false;
+    }
+
+    std::vector<uint64_t> checksums(_checksums.size());
+    read(reinterpret_cast<char*>(checksums.data()),
+         checksums.size() * sizeof(uint64_t),
+         _header.checksums_offset);
+    return checksums == _checksums;
+}
+
 void PackLayout::set_placement(std::vector<uint32_t> placement) {
     if (!is_permutation_of_range(placement, _header.num_expert)) {
         throw std::invalid_argument("OTD pack: placement is not a permutation of the expert range");
