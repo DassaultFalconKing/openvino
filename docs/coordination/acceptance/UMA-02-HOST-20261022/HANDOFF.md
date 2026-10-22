@@ -5,7 +5,7 @@
 
 ## Pointers
 
-- OpenVINO scratch: `scratch/uma-02-host-harness-20261022`
+- OpenVINO scratch: `scratch/uma-02-host-harness-20261022` @ `74c8ea0d` — Draft PR https://github.com/DassaultFalconKing/openvino/pull/8
 - Wave-01 Draft PR #7 remains the OTD host acceptance pin (`74003278`)
 - UMA design: OVMS Draft PR #22
 - Flag: `OTD_RESIDENT_USM_HOST=1` (default off)

@@ -10,10 +10,12 @@
 | Item | Value |
 |---|---|
 | Branch | `scratch/uma-02-host-harness-20261022` |
+| HEAD (code+docs) | `74c8ea0d60692f1ac22436a311e63866c1f064b8` |
+| Draft PR | https://github.com/DassaultFalconKing/openvino/pull/8 |
 | Base (Wave-01) | `74003278a9c8925fcda7bc32ceb27320e59bbb1d` |
 | Cohort baseline | `479219245f6f10b670367ad35af16513d72d2091` |
 | Design pack | UMA-01 `docs/.../UMA-01-DESIGN-20261022/` / OVMS Draft PR #22 |
-| Binary SHA256 | see `evidence/binary-sha256.txt` under `C:\gm\orchestration\uma-02-windows-20261022\` |
+| Binary SHA256 | see local `C:\gm\orchestration\uma-02-windows-20261022\evidence\` |
 
 ## Host matrix (required for HOST_PASS)
 
