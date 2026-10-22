@@ -113,6 +113,12 @@ public:
     // indexed by expert ID, NOT by its physical placement index.
     bool verify_record_payload(uint32_t expert, const void* data, size_t bytes) const;
 
+    // After opening the serving reader's handle, compare its metadata with this validated
+    // layout. Both metadata and later payload reads then use that SAME pinned handle.
+    // Reads only header, placement and checksums, never expert payloads; throws if read fails.
+    using SnapshotRead = std::function<void(char* destination, size_t bytes, uint64_t offset)>;
+    bool matches_reader_snapshot(uint64_t file_bytes, const SnapshotRead& read) const;
+
     // Replaces the expert -> record-position mapping; must be a permutation of [0, num_expert).
     void set_placement(std::vector<uint32_t> placement);
 

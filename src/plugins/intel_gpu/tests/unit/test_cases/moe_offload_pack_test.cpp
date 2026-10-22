@@ -402,6 +402,65 @@ TEST(moe_otd_pack, invalid_placement_table_and_overflowed_plan_fail_closed) {
     EXPECT_NO_THROW(PackLayout::plan(make_spec(1)));
 }
 
+
+TEST(moe_otd_pack, serving_reader_snapshot_is_bound_to_validated_metadata) {
+    TempDir dir;
+    const auto spec = make_spec();
+    const std::vector<uint32_t> placement = {5, 0, 4, 1, 3, 2};
+    const auto built = build_pack(dir.path, spec, pattern_source(spec), placement);
+    const auto pack = PackLayout::open(built.path, spec);
+    ASSERT_TRUE(pack.has_value());
+
+    // This std::ifstream stands for the persistent serving handle. In real serving,
+    // ParallelWeightReader::file_size() eagerly opens an equivalent pinned handle.
+    std::ifstream pinned(built.path, std::ios::binary);
+    ASSERT_TRUE(pinned);
+    size_t reads = 0;
+    auto read = [&](char* dst, size_t n, uint64_t offset) {
+        ++reads;
+        pinned.clear();
+        pinned.seekg(static_cast<std::streamoff>(offset));
+        if (!pinned.read(dst, static_cast<std::streamsize>(n))) {
+            throw std::runtime_error("test reader: short metadata read");
+        }
+    };
+    ASSERT_TRUE(pack->matches_reader_snapshot(std::filesystem::file_size(built.path), read));
+    EXPECT_EQ(reads, 3U); // header, placement table, checksum table; no payload read
+    EXPECT_FALSE(pack->matches_reader_snapshot(pack->file_size() - 1, read));
+    EXPECT_EQ(reads, 3U);
+
+    // Simulate the path being replaced between PackLayout::open and the serving
+    // handle opening. Even if the new header is canonical, changed placement
+    // or checksums must prevent activation of a mismatched reader.
+    auto changed_placement = [&](char* dst, size_t n, uint64_t offset) {
+        read(dst, n, offset);
+        if (offset == pack->header().placement_offset && n) {
+            dst[0] ^= 1;
+        }
+    };
+    EXPECT_FALSE(pack->matches_reader_snapshot(pack->file_size(), changed_placement));
+
+    auto changed_checksums = [&](char* dst, size_t n, uint64_t offset) {
+        read(dst, n, offset);
+        if (offset == pack->header().checksums_offset && n) {
+            dst[0] ^= 1;
+        }
+    };
+    EXPECT_FALSE(pack->matches_reader_snapshot(pack->file_size(), changed_checksums));
+
+    auto changed_header = [&](char* dst, size_t n, uint64_t offset) {
+        read(dst, n, offset);
+        if (offset == 0 && n) {
+            dst[0] ^= 1;
+        }
+    };
+    EXPECT_FALSE(pack->matches_reader_snapshot(pack->file_size(), changed_header));
+
+    EXPECT_THROW(pack->matches_reader_snapshot(pack->file_size(), [](char*, size_t, uint64_t) {
+        throw std::runtime_error("injected handle error");
+    }), std::runtime_error);
+}
+
 TEST(moe_otd_pack, failing_source_leaves_no_pack) {
     TempDir dir;
     const auto spec = make_spec();
