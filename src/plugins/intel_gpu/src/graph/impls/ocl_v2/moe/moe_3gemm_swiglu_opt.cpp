@@ -21,6 +21,8 @@ using ov::intel_gpu::ocl::moe::ResidentExpertWeightProvider;
 #    include <algorithm>
 #    include <chrono>
 #    include <cstdint>
+#    include <cstdio>
+#    include <cstdlib>
 #    include <fstream>
 #    include <initializer_list>
 #    include <iostream>
@@ -2603,6 +2605,28 @@ public:
 
         auto [hidden_states_mem_ptr, hidden_states_layout] = get_input_info(instance, static_cast<size_t>(MOE3GemmInputIndex::HIDDEN_STATES));
         size_t token_num = get_seq_len(hidden_states_layout);
+        if (std::getenv("MOE_PATH_LOG")) {
+            static size_t n = 0;
+            const char* path = (token_num <= batched_gemv_threshold) ? "gemv"
+                               : use_micro_gemm_prefill             ? "micro"
+                               : use_grouped_gemm_prefill           ? "grouped"
+                                                                    : "onednn";
+            if (n < 5 || (n % 40) == 0) {
+                const auto s = hidden_states_layout.get_shape();
+                std::fprintf(stderr, "[MOE_PATH] n=%zu token_num=%zu thr=%zu path=%s rank=%zu shape=",
+                             n,
+                             token_num,
+                             batched_gemv_threshold,
+                             path,
+                             s.size());
+                for (auto d : s) {
+                    std::fprintf(stderr, "%lld,", static_cast<long long>(d));
+                }
+                std::fprintf(stderr, "\n");
+                std::fflush(stderr);
+            }
+            ++n;
+        }
 
         bind_weights_on_first_exec(instance);
 
