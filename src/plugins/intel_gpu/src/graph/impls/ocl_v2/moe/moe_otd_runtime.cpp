@@ -11,6 +11,8 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <mutex>
+#include <vector>
 
 #include "intel_gpu/runtime/debug_configuration.hpp"
 
@@ -19,6 +21,11 @@ namespace ov::intel_gpu::ocl::moe_otd {
 namespace {
 std::atomic<uint64_t> g_path_b_scatter_entries{0};
 std::atomic<uint64_t> g_path_b_fence_calls{0};
+std::atomic<uint64_t> g_path_b_pre_write_calls{0};
+std::atomic<bool> g_path_b_skip_pre_write{false};
+std::atomic<bool> g_path_b_skip_post_fence{false};
+std::mutex g_pre_write_dependents_mu;
+std::vector<cldnn::stream*> g_pre_write_dependents;
 
 bool env_flag_is_one(const char* name) {
     const char* v = std::getenv(name);
@@ -64,11 +71,29 @@ void scatter_verified_record_to_residents(const PackLayout& pack,
     }
 }
 
+// P0-B: a wait *after* an unqueued host memcpy does not prove prior GPU readers of a
+// recycled slot completed *before* overwrite. Drain the fill stream (and any registered
+// secondary reader streams) before touching usm_host bytes.
+void fence_path_b_pre_write(cldnn::stream& exec_stream) {
+    if (!g_path_b_skip_pre_write.load(std::memory_order_relaxed)) {
+        exec_stream.finish();
+        std::lock_guard<std::mutex> lock(g_pre_write_dependents_mu);
+        for (cldnn::stream* s : g_pre_write_dependents) {
+            if (s != nullptr && s != &exec_stream) {
+                s->finish();
+            }
+        }
+    }
+    g_path_b_pre_write_calls.fetch_add(1, std::memory_order_relaxed);
+}
+
 void fence_path_b_publish(cldnn::stream& exec_stream) {
     // CacheCoherentUMA=false on the target Arc host: host stores into USM are not
     // automatically GPU-visible. flush+finish mirrors blocking copy_from publish.
-    exec_stream.flush();
-    exec_stream.finish();
+    if (!g_path_b_skip_post_fence.load(std::memory_order_relaxed)) {
+        exec_stream.flush();
+        exec_stream.finish();
+    }
     g_path_b_fence_calls.fetch_add(1, std::memory_order_relaxed);
 }
 }  // namespace
@@ -80,6 +105,7 @@ bool otd_resident_usm_host_enabled() {
 void reset_path_b_harness_counters() {
     g_path_b_scatter_entries.store(0, std::memory_order_relaxed);
     g_path_b_fence_calls.store(0, std::memory_order_relaxed);
+    g_path_b_pre_write_calls.store(0, std::memory_order_relaxed);
 }
 
 uint64_t path_b_scatter_entries() {
@@ -88,6 +114,28 @@ uint64_t path_b_scatter_entries() {
 
 uint64_t path_b_fence_calls() {
     return g_path_b_fence_calls.load(std::memory_order_relaxed);
+}
+
+uint64_t path_b_pre_write_calls() {
+    return g_path_b_pre_write_calls.load(std::memory_order_relaxed);
+}
+
+void path_b_register_pre_write_dependent(cldnn::stream& reader_stream) {
+    std::lock_guard<std::mutex> lock(g_pre_write_dependents_mu);
+    g_pre_write_dependents.push_back(&reader_stream);
+}
+
+void path_b_clear_pre_write_dependents() {
+    std::lock_guard<std::mutex> lock(g_pre_write_dependents_mu);
+    g_pre_write_dependents.clear();
+}
+
+void path_b_set_skip_pre_write_for_test(bool skip) {
+    g_path_b_skip_pre_write.store(skip, std::memory_order_relaxed);
+}
+
+void path_b_set_skip_post_fence_for_test(bool skip) {
+    g_path_b_skip_post_fence.store(skip, std::memory_order_relaxed);
 }
 
 void OtdPerfCounters::record_load(const ExpertLoadStats& load) {
@@ -491,7 +539,11 @@ void fill_weights_from_pack(cldnn::stream& exec_stream,
 
     const bool path_b = residents_are_path_b(tensors, pack);
     if (path_b) {
-        // UMA-02 path B: CPU scatter into usm_host, then explicit fence before the caller set_filled.
+        // UMA-02 / P0-B path B:
+        // 1) Pre-write ownership: drain exec (+ registered reader) streams before host overwrite.
+        // 2) CPU scatter into usm_host.
+        // 3) Post-write visibility fence before the caller set_filled.
+        fence_path_b_pre_write(exec_stream);
         scatter_verified_record_to_residents(pack, tensors, slot, staging);
         fence_path_b_publish(exec_stream);
     } else {
