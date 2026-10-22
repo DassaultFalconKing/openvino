@@ -6,8 +6,9 @@
 | Draft PR | https://github.com/DassaultFalconKing/openvino/pull/8 |
 | Pre-fix code SHA | `d82f5f573dfb2b30a4cbf35b1cb8f75e4066c621` |
 | Pre-fix `ov_gpu_unit_tests.exe` SHA256 | `ED14876C4C36A7316F0ABA25B609CD72CE82EE728A958A427FCF3C76EE729ACE` |
-| Post-fix code SHA | *(filled after commits)* |
-| Post-fix binary SHA256 | *(filled after rebuild)* |
+| Post-fix code SHA | `13d56464c2af9e40b5bd27cbabe99d58784bfc6a` |
+| Fix commit | `ed246cdf0252185fae6f16c6391afa63ec36404c` |
+| Post-fix binary SHA256 | `E35E432C3879E903534FE74D41B83155AB04AD7AA974957D4B919024E2C1A8F7` |
 
 ## Prior gate status (reconciled)
 

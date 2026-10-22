@@ -10,7 +10,8 @@ Path-B in-flight ownership + post-write visibility gates **PASS** on Arc 140V. R
 |---|---|
 | Branch | `scratch/uma-02-host-harness-20261022` |
 | Draft PR | https://github.com/DassaultFalconKing/openvino/pull/8 |
-| Code SHA (this verdict) | *(see git log after push)* |
+| Code SHA (this verdict) | `13d56464c2af9e40b5bd27cbabe99d58784bfc6a` |
+| Fix commit | `ed246cdf0252185fae6f16c6391afa63ec36404c` |
 | `ov_gpu_unit_tests.exe` SHA256 | `E35E432C3879E903534FE74D41B83155AB04AD7AA974957D4B919024E2C1A8F7` |
 | Device | Intel(R) Arc(TM) 140V GPU |
 
