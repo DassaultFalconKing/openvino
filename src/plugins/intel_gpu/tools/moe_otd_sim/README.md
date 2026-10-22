@@ -102,3 +102,7 @@ runtime, which streams experts of an overflowing lease (evicting resident ones) 
 misses, not an implementable policy. Results are split by call phase (1-token decode,
 2-8 token windows such as speculative verification, larger prefill batches, fallback) and
 by model key.
+
+## Policy evidence gate (CLD-03B)
+
+`trace_integrity.complete` means the **trace writer file** closed and its end record is present; it does not imply all calls successfully completed. The new additive `trace_integrity.policy_evidence_eligible` is true only if the writer closed cleanly, there was no salvaged final line, and no incomplete calls/events. When false, `verify`, `summary`, and `simulate` remain useful **diagnostics only**. Do not use any policy, Belady, hit-rate or bytes comparison to authorize production changes. `verify` retains its previous exit-code semantics for backwards compatibility; consumers must inspect this flag separately. In particular, an incomplete pack miss can modify cache lookup state without a complete expert event, so 0 replay mismatches is insufficient evidence for a scheduler decision. This patch does not invent a failed expert E event or change trace v1.

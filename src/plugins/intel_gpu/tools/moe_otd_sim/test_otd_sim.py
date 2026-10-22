@@ -235,6 +235,7 @@ class TraceIntegrityTest(unittest.TestCase):
         integrity = trace.integrity.as_dict()
         self.assertFalse(integrity["complete"])
         self.assertFalse(integrity["end_record"])
+        self.assertFalse(integrity["policy_evidence_eligible"])
         self.assertEqual(integrity["records"], 6)
         self.assertTrue(any("no end record" in w for w in integrity["warnings"]))
         result = verify_lru(trace)
@@ -243,6 +244,7 @@ class TraceIntegrityTest(unittest.TestCase):
     def test_end_record_marks_trace_complete(self):
         trace = parse_text(VALID + END)
         self.assertTrue(trace.integrity.complete)
+        self.assertTrue(trace.integrity.policy_evidence_eligible)
         self.assertEqual(trace.integrity.warnings, [])
 
     def test_end_record_count_mismatch_reports_lost_records(self):
@@ -258,6 +260,7 @@ class TraceIntegrityTest(unittest.TestCase):
         trace = parse_text(truncated, salvage=True)
         self.assertEqual(trace.integrity.salvaged_line, 8)
         self.assertFalse(trace.integrity.complete)
+        self.assertFalse(trace.integrity.policy_evidence_eligible)
         self.assertEqual(sum(len(c.events) for c in trace.calls), 3)
 
     def test_unterminated_final_line_is_treated_as_truncated_even_if_parseable(self):
@@ -317,11 +320,13 @@ class TraceIntegrityTest(unittest.TestCase):
 
     def test_incomplete_call_is_replayed_with_its_recorded_prefix(self):
         trace = parse_text(VALID + INCOMPLETE + END_WITH_INCOMPLETE)
-        self.assertTrue(trace.integrity.complete)
+        self.assertTrue(trace.integrity.complete)  # file was closed
+        self.assertFalse(trace.integrity.policy_evidence_eligible)  # calls did not all finish
         self.assertEqual((trace.integrity.incomplete_calls, trace.integrity.incomplete_events), (1, 1))
         self.assertTrue(trace.calls[-1].incomplete)
         self.assertTrue(any("never completed" in w for w in trace.integrity.warnings))
         result = verify_lru(trace)
+        self.assertFalse(result["trace_integrity"]["policy_evidence_eligible"])
         self.assertEqual((result["checked_events"], result["mismatches"]), (4, 0))
         total = replay(trace, "lru")["total"]
         self.assertEqual((total["accesses"], total["misses"], total["evictions"]), (4, 3, 1))
@@ -413,6 +418,7 @@ class CliIntegrityTest(unittest.TestCase):
         total = json.loads(out)[0]["total"]
         self.assertEqual(total["logical_expert_bytes_per_committed_token"], 8192 / 4)
         self.assertEqual(json.loads(out)[0]["run_meta"]["accepted_tokens"], otd_sim.NOT_EXPOSED)
+        self.assertTrue(json.loads(out)[0]["trace_integrity"]["policy_evidence_eligible"])
         rc, _, err = run_cli(["simulate", trace_path, "--run-meta", meta, "--committed-tokens", "5"])
         self.assertEqual(rc, 2)
         self.assertIn("differs", err)

@@ -87,11 +87,20 @@ class TraceIntegrity:
 
     @property
     def complete(self) -> bool:
+        # File-writing completeness, not proof that each expert load finished.
         return self.end_record is not None and self.salvaged_line is None
+
+    @property
+    def policy_evidence_eligible(self) -> bool:
+        # An incomplete/aborted call may have changed real LRU slot state without
+        # a matching E record. Such a trace can be inspected and replayed
+        # diagnostically, but MUST NOT authorize a production policy decision.
+        return self.complete and self.incomplete_calls == 0 and self.incomplete_events == 0
 
     def as_dict(self) -> dict:
         return {
             "complete": self.complete,
+            "policy_evidence_eligible": self.policy_evidence_eligible,
             "end_record": self.end_record is not None,
             "records": self.records,
             "incomplete_calls": self.incomplete_calls,
@@ -273,6 +282,9 @@ def parse_trace(lines: Iterable[str], salvage: bool = False) -> Trace:
     if incomplete:
         integrity.warnings.append(f"{len(incomplete)} call(s) never completed; they are replayed last, "
                                   "so replay after their real position may diverge")
+    if not integrity.policy_evidence_eligible:
+        integrity.warnings.append("policy selection blocked: trace lacks complete, reliable call evidence; "
+                                  "diagnostic replay is NOT production acceptance")
     _link_fallbacks(calls)
     return Trace(layers, calls + incomplete, integrity)
 
