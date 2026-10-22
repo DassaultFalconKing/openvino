@@ -150,6 +150,9 @@ PackBuildResult build_layer_pack(const std::filesystem::path& dir,
                                  ParallelWeightReader& weight_reader);
 
 // Streams one expert from a pack into `slot` with a single positional read and no transpose.
+// Path A (default): usm_device residents via memory::copy_from.
+// Path B (scratch): usm_host residents via pre-write drain → CPU scatter → post-write fence
+// before the caller set_filled (P0-B: post-scatter fence alone is not pre-write ownership).
 void fill_weights_from_pack(cldnn::stream& exec_stream,
                             const PackLayout& pack,
                             ParallelWeightReader& pack_reader,
@@ -158,5 +161,21 @@ void fill_weights_from_pack(cldnn::stream& exec_stream,
                             size_t slot,
                             std::vector<uint8_t>& staging,
                             ExpertLoadStats* stats = nullptr);
+
+// Scratch UMA-02 policy: allocate OTD partial-upload residents as usm_host when env is "1".
+// Default off — production / Wave-01 / C6 keep preferred usm_device.
+bool otd_resident_usm_host_enabled();
+
+// Test-visible counters / harness hooks for UMA-02 / P0-B (path B only).
+void reset_path_b_harness_counters();
+uint64_t path_b_scatter_entries();
+uint64_t path_b_fence_calls();
+uint64_t path_b_pre_write_calls();
+// Extra reader streams that must reach idle before path-B host overwrite (two-queue tests).
+void path_b_register_pre_write_dependent(cldnn::stream& reader_stream);
+void path_b_clear_pre_write_dependents();
+// Test-only: skip ownership / visibility fences to document the race or NEO contract.
+void path_b_set_skip_pre_write_for_test(bool skip);
+void path_b_set_skip_post_fence_for_test(bool skip);
 
 }  // namespace ov::intel_gpu::ocl::moe_otd

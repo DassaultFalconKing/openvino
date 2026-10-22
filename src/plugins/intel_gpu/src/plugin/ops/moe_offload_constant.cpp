@@ -4,7 +4,17 @@
 
 #include "moe_offload_constant.hpp"
 
+#include <cstdlib>
+
 namespace ov::intel_gpu {
+
+namespace {
+// Mirrors moe_otd::otd_resident_usm_host_enabled() without pulling graph/runtime headers into plugin ops.
+bool otd_resident_usm_host_enabled() {
+    const char* v = std::getenv("OTD_RESIDENT_USM_HOST");
+    return v != nullptr && v[0] == '1' && v[1] == '\0';
+}
+}  // namespace
 
 // Input indices 3..11 are routed expert weights/scales/zps (WEIGHT_0..ZP_2).
 // Input indices 12..21 are shared expert weights (SHARED_GATE_WEIGHT..SHARED_GATE_GATE_WEIGHT).
@@ -65,7 +75,11 @@ PartialUploadDesc try_prepare_partial_upload(cldnn::engine& engine,
     desc.upload_shape[0] = std::min<size_t>(const_shape[0], resident_expert_num);
 
     auto upload_layout = cldnn::layout(desc.upload_shape, out_dtype, const_format);
-    auto upload_mem = engine.allocate_memory(upload_layout, engine.get_preferred_memory_allocation_type(), false);
+    // Scratch UMA-02: OTD_RESIDENT_USM_HOST=1 forces usm_host for routed partial uploads only.
+    // Default remains preferred (typically usm_device). Do not retarget unrelated buffers.
+    const auto alloc_type =
+        otd_resident_usm_host_enabled() ? cldnn::allocation_type::usm_host : engine.get_preferred_memory_allocation_type();
+    auto upload_mem = engine.allocate_memory(upload_layout, alloc_type, false);
     // Reinterpret the smaller physical allocation as the full constant layout so the
     // graph sees the expected shape/layout. This is safe because:
     // 1. constant.cpp marks this data node with skip_device_transfer=true (partial_upload.enabled),
