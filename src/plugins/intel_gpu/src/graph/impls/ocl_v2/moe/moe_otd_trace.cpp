@@ -75,7 +75,7 @@ TraceWriter::TraceWriter(std::unique_ptr<std::ostream> out) : _out(std::move(out
 }
 
 TraceWriter::~TraceWriter() {
-    flush();
+    close();
 }
 
 uint64_t TraceWriter::now_ns() const {
@@ -86,7 +86,7 @@ uint64_t TraceWriter::now_ns() const {
 uint32_t TraceWriter::register_layer(std::string_view layer_name, std::string_view model_identity, size_t capacity, size_t num_expert, size_t top_k) {
     std::lock_guard<std::mutex> lock(_mutex);
     const uint32_t layer = _next_layer++;
-    if (_out) {
+    if (_out && !_closed) {
         *_out << "L," << layer << ',' << std::hex << fnv1a64(layer_name) << ',' << fnv1a64(model_identity) << std::dec << ',' << capacity << ',' << num_expert
               << ',' << top_k << '\n';
     }
@@ -96,6 +96,9 @@ uint32_t TraceWriter::register_layer(std::string_view layer_name, std::string_vi
 uint64_t TraceWriter::begin_call(uint32_t layer, AcquireKind kind, size_t routed, const std::vector<uint32_t>& unique_experts) {
     const auto t = now_ns();
     std::lock_guard<std::mutex> lock(_mutex);
+    if (_closed) {
+        return _next_call++;
+    }
     PendingCall call;
     call.id = _next_call++;
     call.t_ns = t;
@@ -136,21 +139,27 @@ void TraceWriter::end_call(uint64_t call, bool overflow) {
         return;
     }
     if (_out) {
-        auto& out = *_out;
-        out << "C," << it->id << ',' << it->t_ns << ',' << it->layer << ',' << static_cast<char>(it->kind) << ',' << it->routed << ','
-            << (overflow ? "overflow" : "ok") << ',';
-        for (size_t i = 0; i < it->unique_experts.size(); i++) {
-            if (i != 0) {
-                out << ' ';
-            }
-            out << it->unique_experts[i];
-        }
-        out << '\n';
-        for (const auto& line : it->expert_lines) {
-            out << line;
-        }
+        write_call_unlocked(*it, overflow ? "overflow" : "ok", {});
+        _calls_written++;
+        _experts_written += it->expert_lines.size();
     }
     _pending.erase(it);
+}
+
+void TraceWriter::write_call_unlocked(const PendingCall& call, std::string_view status, std::string_view prefix) {
+    auto& out = *_out;
+    out << prefix << "C," << call.id << ',' << call.t_ns << ',' << call.layer << ',' << static_cast<char>(call.kind) << ',' << call.routed << ','
+        << status << ',';
+    for (size_t i = 0; i < call.unique_experts.size(); i++) {
+        if (i != 0) {
+            out << ' ';
+        }
+        out << call.unique_experts[i];
+    }
+    out << '\n';
+    for (const auto& line : call.expert_lines) {
+        out << prefix << line;
+    }
 }
 
 void TraceWriter::flush() {
@@ -158,6 +167,27 @@ void TraceWriter::flush() {
     if (_out) {
         _out->flush();
     }
+}
+
+void TraceWriter::close() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (_closed) {
+        return;
+    }
+    _closed = true;
+    if (!_out) {
+        _pending.clear();
+        return;
+    }
+    uint64_t incomplete_experts = 0;
+    for (const auto& call : _pending) {
+        write_call_unlocked(call, "incomplete", "# incomplete ");
+        incomplete_experts += call.expert_lines.size();
+    }
+    *_out << "# end,calls=" << _calls_written << ",experts=" << _experts_written << ",incomplete_calls=" << _pending.size()
+          << ",incomplete_experts=" << incomplete_experts << '\n';
+    _out->flush();
+    _pending.clear();
 }
 
 TraceWriter* get_trace_writer() {

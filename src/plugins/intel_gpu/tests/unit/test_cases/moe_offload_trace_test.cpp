@@ -169,3 +169,68 @@ TEST(moe_otd_trace, unknown_call_is_ignored) {
     trace.writer->flush();
     ASSERT_EQ(lines_of(trace.stream->str()).size(), 1U);
 }
+
+TEST(moe_otd_trace, close_writes_end_record_with_counts) {
+    auto trace = make_trace();
+    const auto layer = trace.writer->register_layer("moe.0", "model.bin", 4, 64, 2);
+    const auto call = trace.writer->begin_call(layer, AcquireKind::simultaneous, 4, {7, 3});
+    trace.writer->expert(call, layer, 7, 0, false, std::nullopt, {});
+    trace.writer->expert(call, layer, 3, 1, false, std::nullopt, {});
+    trace.writer->end_call(call, false);
+    trace.writer->close();
+
+    const auto lines = lines_of(trace.stream->str());
+    ASSERT_EQ(lines.size(), 6U);
+    ASSERT_EQ(lines[5], "# end,calls=1,experts=2,incomplete_calls=0,incomplete_experts=0");
+}
+
+TEST(moe_otd_trace, unended_call_is_written_as_incomplete_on_close) {
+    // A load that throws skips end_call; its cache effects must still be visible in the trace.
+    auto trace = make_trace();
+    const auto layer = trace.writer->register_layer("moe.0", "model.bin", 4, 64, 2);
+    const auto done = trace.writer->begin_call(layer, AcquireKind::one, 1, {1});
+    trace.writer->expert(done, layer, 1, 0, false, std::nullopt, {});
+    trace.writer->end_call(done, false);
+    const auto failed = trace.writer->begin_call(layer, AcquireKind::simultaneous, 4, {5, 6});
+    trace.writer->expert(failed, layer, 5, 1, false, std::nullopt, {});
+    trace.writer->close();
+
+    const auto lines = lines_of(trace.stream->str());
+    ASSERT_EQ(lines.size(), 7U);
+    ASSERT_EQ(without_time(lines[2]), "C,0,0,O,1,ok,1");
+    ASSERT_EQ(lines[4].rfind("# incomplete C,1,", 0), 0U) << lines[4];
+    ASSERT_NE(lines[4].find(",0,S,4,incomplete,5 6"), std::string::npos) << lines[4];
+    ASSERT_EQ(lines[5].rfind("# incomplete E,1,", 0), 0U) << lines[5];
+    ASSERT_NE(lines[5].find(",0,5,1,0,-1,0,0,0,0,0"), std::string::npos) << lines[5];
+    ASSERT_EQ(lines[6], "# end,calls=1,experts=1,incomplete_calls=1,incomplete_experts=1");
+}
+
+TEST(moe_otd_trace, close_is_idempotent_and_later_records_are_dropped) {
+    auto trace = make_trace();
+    const auto layer = trace.writer->register_layer("moe.0", "model.bin", 4, 64, 2);
+    trace.writer->close();
+    const auto size_after_close = trace.stream->str().size();
+
+    trace.writer->register_layer("moe.1", "model.bin", 4, 64, 2);
+    const auto call = trace.writer->begin_call(layer, AcquireKind::one, 1, {2});
+    trace.writer->expert(call, layer, 2, 0, false, std::nullopt, {});
+    trace.writer->end_call(call, false);
+    trace.writer->close();
+    trace.writer->flush();
+    ASSERT_EQ(trace.stream->str().size(), size_after_close);
+    ASSERT_EQ(lines_of(trace.stream->str()).back(), "# end,calls=0,experts=0,incomplete_calls=0,incomplete_experts=0");
+}
+
+TEST(moe_otd_trace, destructor_closes) {
+    // The writer owns and destroys its ostream; the buffer outlives it so the tail can be inspected.
+    std::stringbuf buffer;
+    {
+        TraceWriter writer(std::make_unique<std::ostream>(&buffer));
+        writer.register_layer("moe.0", "model.bin", 4, 64, 2);
+        writer.begin_call(0, AcquireKind::one, 1, {3});
+    }
+    const auto lines = lines_of(buffer.str());
+    ASSERT_EQ(lines.size(), 4U);
+    ASSERT_EQ(lines[2].rfind("# incomplete C,0,", 0), 0U) << lines[2];
+    ASSERT_EQ(lines[3], "# end,calls=0,experts=0,incomplete_calls=1,incomplete_experts=0");
+}
