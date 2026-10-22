@@ -377,7 +377,7 @@ class Counters:
         return d
 
 
-def _logical_steps(trace: Trace, capacities: Dict[int, int], precheck: bool):
+def _logical_steps(trace: Trace, capacities: Dict[int, int], legacy_partial_lease: bool):
     """Yields (call, experts_to_access, overflowed) in replay order for the given capacities.
 
     Recorded fallback calls are skipped when the simulated lease succeeds; when a simulated lease
@@ -398,7 +398,7 @@ def _logical_steps(trace: Trace, capacities: Dict[int, int], precheck: bool):
         if not overflow:
             yield call, call.unique, False
             continue
-        yield call, ([] if precheck else call.unique[:cap]), True
+        yield call, (call.unique[:cap] if legacy_partial_lease else []), True
         recorded = fallbacks.get(call.call)
         if recorded:
             for fb in recorded:
@@ -413,7 +413,7 @@ def replay(trace: Trace,
            policy: str,
            capacity: Optional[int] = None,
            capacity_fraction: Optional[float] = None,
-           precheck: bool = False) -> dict:
+           legacy_partial_lease: bool = False) -> dict:
     capacities: Dict[int, int] = {}
     for lid, layer in trace.layers.items():
         if capacity is not None:
@@ -423,7 +423,7 @@ def replay(trace: Trace,
         else:
             capacities[lid] = layer.capacity
 
-    steps = list(_logical_steps(trace, capacities, precheck))
+    steps = list(_logical_steps(trace, capacities, legacy_partial_lease))
     caches: Dict[int, Policy] = {}
     for lid in trace.layers:
         if policy == "opt":
@@ -462,7 +462,7 @@ def replay(trace: Trace,
 
     return {
         "policy": policy,
-        "precheck": precheck,
+        "legacy_partial_lease": legacy_partial_lease,
         "capacity": capacity,
         "capacity_fraction": capacity_fraction,
         "total": total.as_dict(),
@@ -480,7 +480,8 @@ def verify_lru(trace: Trace) -> dict:
     for call in trace.calls:
         cache = caches[call.layer]
         pinned: Set[int] = set()
-        expected = call.unique if call.kind == "O" else call.unique[: trace.layers[call.layer].capacity]
+        # The runtime rejects an overflowing lease before touching the cache.
+        expected = [] if call.kind == "S" and call.overflow else call.unique
         if call.kind == "S" and call.overflow != (len(call.unique) > trace.layers[call.layer].capacity):
             mismatches.append({"call": call.call, "reason": "overflow status does not match capacity"})
         if [ev.expert for ev in call.events] != list(expected):
@@ -561,7 +562,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     group = p_sim.add_mutually_exclusive_group()
     group.add_argument("--capacity", type=int, action="append", help="slots per layer; repeatable")
     group.add_argument("--capacity-fraction", type=float, action="append", help="fraction of num_expert; repeatable")
-    p_sim.add_argument("--precheck", action="store_true", help="reject overflowing leases before touching the cache")
+    p_sim.add_argument("--legacy-partial-lease", action="store_true",
+                       help="model the pre-fix runtime that loads experts of an overflowing lease before rejecting it")
     p_sim.add_argument("--committed-tokens", type=int, help="accepted output tokens of the traced run")
 
     args = parser.parse_args(argv)
@@ -584,7 +586,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         out = []
         for cap, frac in sizes:
             for policy in policies:
-                result = replay(trace, policy, cap, frac, args.precheck)
+                result = replay(trace, policy, cap, frac, args.legacy_partial_lease)
                 _per_token(result, args.committed_tokens)
                 out.append(result)
     json.dump(out, sys.stdout, indent=2)

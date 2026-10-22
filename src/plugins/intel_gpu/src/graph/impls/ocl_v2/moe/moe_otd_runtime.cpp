@@ -36,7 +36,6 @@ OtdPerfSnapshot OtdPerfCounters::snapshot() const {
     s.gpu_copy_ns = gpu_copy_ns.load(std::memory_order_relaxed);
     s.tensor_load_count = tensor_load_count.load(std::memory_order_relaxed);
     s.expert_loads = expert_loads.load(std::memory_order_relaxed);
-    s.overflow_partial_loads = overflow_partial_loads.load(std::memory_order_relaxed);
     s.batched_fallbacks = batched_fallbacks.load(std::memory_order_relaxed);
     s.grouped_fallbacks = grouped_fallbacks.load(std::memory_order_relaxed);
     s.created_onednn_kernels = created_onednn_kernels.load(std::memory_order_relaxed);
@@ -57,10 +56,9 @@ void OtdPerfCounters::dump() const {
                    << ", avg_gpu_copy_us=" << (loads > 0 ? s.gpu_copy_ns / 1000 / loads : 0) << ", total_disk_io_ms=" << s.disk_io_ns / 1000000
                    << ", total_gpu_copy_ms=" << s.gpu_copy_ns / 1000000 << ", batched_fallbacks=" << s.batched_fallbacks
                    << ", grouped_fallbacks=" << s.grouped_fallbacks << ", created_onednn_kernels=" << s.created_onednn_kernels << std::endl;
-    GPU_DEBUG_INFO << "[OTD_PERF] expert_loads=" << s.expert_loads << ", evictions=" << s.evictions << ", overflow_partial_loads=" << s.overflow_partial_loads
-                   << ", disk_read_bytes=" << s.disk_read_bytes << ", disk_reads=" << s.disk_reads << ", total_transpose_ms=" << s.transpose_ns / 1000000
-                   << ", disk_read_p50_us<=" << s.disk_read_p50_us << ", disk_read_p95_us<=" << s.disk_read_p95_us
-                   << ", disk_read_p99_us<=" << s.disk_read_p99_us << std::endl;
+    GPU_DEBUG_INFO << "[OTD_PERF] expert_loads=" << s.expert_loads << ", evictions=" << s.evictions << ", disk_read_bytes=" << s.disk_read_bytes
+                   << ", disk_reads=" << s.disk_reads << ", total_transpose_ms=" << s.transpose_ns / 1000000 << ", disk_read_p50_us<=" << s.disk_read_p50_us
+                   << ", disk_read_p95_us<=" << s.disk_read_p95_us << ", disk_read_p99_us<=" << s.disk_read_p99_us << std::endl;
 }
 
 OtdPerfCounters* get_perf_counters() {

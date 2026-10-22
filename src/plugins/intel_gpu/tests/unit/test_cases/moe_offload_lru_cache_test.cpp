@@ -8,6 +8,8 @@
 
 #include <thread>
 #include <vector>
+#include <list>
+#include <map>
 #include <set>
 #include <atomic>
 
@@ -289,10 +291,7 @@ TEST(moe_lru_cache, evictions_counter_includes_explicit_evict) {
     ASSERT_EQ(cache.evictions(), 3U);
 }
 
-// Known latent defect, kept disabled: after an explicit evict_one() the next insert takes
-// slot m_total_experts instead of the freed slot, so two resident experts can share a slot.
-// evict_one() has no production caller today; enable this once the slot free-list is fixed.
-TEST(moe_lru_cache, DISABLED_explicit_evict_then_insert_keeps_slots_unique) {
+TEST(moe_lru_cache, explicit_evict_then_insert_reuses_freed_slot) {
     LRUCache cache(3);
     cache.get_lru_item(0);  // slot 0
     cache.get_lru_item(1);  // slot 1
@@ -301,6 +300,57 @@ TEST(moe_lru_cache, DISABLED_explicit_evict_then_insert_keeps_slots_unique) {
     auto [slot, hit] = cache.get_lru_item(3);
     ASSERT_FALSE(hit);
     ASSERT_EQ(slot, 0U);
+
+    // Experts 1 and 2 keep their slots and the cache is full again.
+    ASSERT_EQ(cache.get_lru_item(1).first, 1U);
+    ASSERT_EQ(cache.get_lru_item(2).first, 2U);
+    auto next = cache.lookup(4);  // evicts expert 3 (oldest), reuses slot 0
+    ASSERT_EQ(next.slot, 0U);
+    ASSERT_EQ(next.evicted, std::optional<size_t>(3));
+}
+
+TEST(moe_lru_cache, resident_slots_stay_unique_under_mixed_evictions) {
+    const size_t cap = 5;
+    LRUCache cache(cap);
+    // Reference model: LRU order (oldest first) and the slot each resident expert owns.
+    std::list<size_t> order;
+    std::map<size_t, size_t> slot_of;
+    for (size_t i = 0; i < 400; ++i) {
+        if (i % 7 == 3 && !order.empty()) {
+            cache.evict_one();
+            slot_of.erase(order.front());
+            order.pop_front();
+        }
+        const size_t expert = (i * 11 + i / 5) % 13;
+        auto r = cache.lookup(expert);
+        ASSERT_LT(r.slot, cap);
+        if (slot_of.count(expert)) {
+            ASSERT_EQ(r.slot, slot_of[expert]);
+            ASSERT_FALSE(r.evicted.has_value());
+            order.remove(expert);
+        } else if (slot_of.size() == cap) {
+            ASSERT_EQ(r.evicted, std::optional<size_t>(order.front()));
+            slot_of.erase(order.front());
+            order.pop_front();
+        } else {
+            ASSERT_FALSE(r.evicted.has_value());
+        }
+        order.push_back(expert);
+        slot_of[expert] = r.slot;
+
+        std::set<size_t> used;
+        for (const auto& entry : slot_of) {
+            ASSERT_TRUE(used.insert(entry.second).second) << "slot " << entry.second << " shared at step " << i;
+        }
+        ASSERT_EQ(cache.size(), slot_of.size());
+    }
+}
+
+TEST(moe_lru_cache, zero_capacity_never_crashes) {
+    LRUCache cache(0);
+    auto r = cache.lookup(1);
+    ASSERT_FALSE(r.hit);
+    ASSERT_EQ(cache.size(), 0U);
 }
 
 // --------------------------------------------------

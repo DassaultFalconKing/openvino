@@ -75,16 +75,17 @@ private:
 
     size_t m_max_total_experts;
     size_t m_total_experts;
-    size_t m_to_filled_lru_expert_no;
     size_t m_evictions = 0;
 
     std::list<Node> m_list;
     std::vector<bool> m_filled_list;
+    // Unoccupied slots, lowest index at the back so fresh caches assign slots 0, 1, 2, ...
+    std::vector<size_t> m_free_slots;
     std::unordered_map<Key, std::list<Node>::iterator, KeyHash> m_map;
     mutable std::mutex m_mutex;
 
     void move_to_end(std::list<Node>::iterator it);
-    std::optional<size_t> evict_one_unlocked();
+    std::optional<Node> evict_one_unlocked();
 };
 
 }  // namespace ov::intel_gpu::ocl::moe
