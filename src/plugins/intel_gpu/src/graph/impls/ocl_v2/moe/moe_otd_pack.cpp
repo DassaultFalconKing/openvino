@@ -13,9 +13,60 @@
 #include <stdexcept>
 #include <system_error>
 
+#ifdef _WIN32
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    include <windows.h>
+#else
+#    include <cerrno>
+#    include <fcntl.h>
+#    include <unistd.h>
+#endif
+
 namespace ov::intel_gpu::ocl::moe_otd {
 
 namespace {
+
+// Forces the file's data to stable storage. Without it a crash shortly after the rename could
+// leave the published name pointing at data that never reached the disk.
+void sync_to_disk(const std::filesystem::path& path) {
+#ifdef _WIN32
+    HANDLE handle = ::CreateFileW(path.c_str(),
+                                  GENERIC_WRITE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr,
+                                  OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL,
+                                  nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "OTD pack: cannot open for flush");
+    }
+    const BOOL flushed = ::FlushFileBuffers(handle);
+    const DWORD error = flushed ? ERROR_SUCCESS : ::GetLastError();
+    ::CloseHandle(handle);
+    if (!flushed) {
+        throw std::system_error(static_cast<int>(error), std::system_category(), "OTD pack: flush failed");
+    }
+#else
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        throw std::system_error(errno, std::generic_category(), "OTD pack: cannot open for fsync");
+    }
+    int rc = 0;
+    do {
+        rc = ::fsync(fd);
+    } while (rc != 0 && errno == EINTR);
+    const int error = rc != 0 ? errno : 0;
+    ::close(fd);
+    if (rc != 0) {
+        throw std::system_error(error, std::generic_category(), "OTD pack: fsync failed");
+    }
+#endif
+}
 
 constexpr char pack_magic[8] = {'O', 'T', 'D', 'P', 'A', 'C', 'K', '1'};
 constexpr uint64_t fnv_offset = 14695981039346656037ULL;
@@ -204,6 +255,10 @@ std::optional<PackLayout> PackLayout::open(const std::filesystem::path& path, co
         return std::nullopt;
     }
     std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        set_reason(reason, "cannot open");
+        return std::nullopt;
+    }
     PackLayout layout;
     if (!in.read(reinterpret_cast<char*>(&layout._header), sizeof(PackHeader))) {
         set_reason(reason, "truncated header");
@@ -268,6 +323,12 @@ PackBuildResult build_pack(const std::filesystem::path& dir,
     std::ostringstream tmp_name;
     tmp_name << result.path.filename().string() << ".tmp-" << std::hex << std::random_device{}() << std::random_device{}();
     const auto tmp_path = dir / tmp_name.str();
+    {
+        std::error_code ec;
+        if (std::filesystem::exists(std::filesystem::symlink_status(tmp_path, ec))) {
+            throw std::runtime_error("OTD pack: temporary name already in use: " + tmp_path.filename().string());
+        }
+    }
 
     std::vector<uint64_t> checksums(spec.num_expert, 0);
     try {
@@ -317,6 +378,7 @@ PackBuildResult build_pack(const std::filesystem::path& dir,
             throw std::runtime_error("OTD pack: write failed for " + tmp_path.string());
         }
         out.close();
+        sync_to_disk(tmp_path);
         result.bytes_written += layout.header().records_offset;
     } catch (...) {
         std::error_code ec;
@@ -324,14 +386,31 @@ PackBuildResult build_pack(const std::filesystem::path& dir,
         throw;
     }
 
+    // Publish with a single rename and never delete the destination first, so readers see either
+    // the previous file or the complete new one. POSIX rename() replaces atomically. On Windows
+    // std::filesystem::rename replaces via MoveFileExW(MOVEFILE_REPLACE_EXISTING), which fails while
+    // any process holds the destination open without FILE_SHARE_DELETE (ov::util readers do).
+    // rename() replaces a symlink or reparse point at the destination; it never writes through it.
     std::error_code ec;
-    std::filesystem::remove(result.path, ec);
     std::filesystem::rename(tmp_path, result.path, ec);
     if (ec) {
-        // A concurrent builder may have published the same content first.
-        std::filesystem::remove(tmp_path);
-        if (!PackLayout::open(result.path, spec)) {
-            throw std::runtime_error("OTD pack: cannot publish " + result.path.string() + ": " + ec.message());
+        std::error_code ignored;
+        std::filesystem::remove(tmp_path, ignored);
+        // A concurrent builder may have published the same content first. Accept the destination
+        // only if it is exactly what this call would have produced.
+        std::string reason;
+        const auto existing = PackLayout::open(result.path, spec, &reason);
+        bool usable = existing.has_value();
+        if (usable && !placement.empty() && existing->placement() != placement) {
+            usable = false;
+            reason = "different placement";
+        }
+        if (usable && verify_pack(result.path, spec, &reason) != 0) {
+            usable = false;
+        }
+        if (!usable) {
+            throw std::runtime_error("OTD pack: cannot publish " + result.path.filename().string() + ": " + ec.message() +
+                                     "; destination left unchanged (" + reason + ")");
         }
         result.reused_existing = true;
     }
