@@ -4,12 +4,11 @@
 
 #pragma once
 
-#include "intel_gpu/runtime/shape_predictor.hpp"
-#include "openvino/runtime/properties.hpp"
-#include "openvino/runtime/intel_gpu/properties.hpp"
-
 #include "intel_gpu/primitives/implementation_desc.hpp"
+#include "intel_gpu/runtime/shape_predictor.hpp"
 #include "openvino/core/rt_info/weightless_caching_attributes.hpp"
+#include "openvino/runtime/intel_gpu/properties.hpp"
+#include "openvino/runtime/properties.hpp"
 
 namespace ov::intel_gpu {
 
@@ -30,16 +29,18 @@ static constexpr Property<std::string, PropertyMutability::RO> device_id{"GPU_DE
  */
 static constexpr Property<std::string, PropertyMutability::RO> runtime_type{"GPU_RUNTIME_TYPE"};
 
-enum class QueueTypes : int16_t {
-    in_order,
-    out_of_order
-};
+enum class QueueTypes : int16_t { in_order, out_of_order };
 
 inline std::ostream& operator<<(std::ostream& os, const QueueTypes& val) {
     switch (val) {
-        case QueueTypes::in_order: os << "in-order"; break;
-        case QueueTypes::out_of_order: os << "out-of-order"; break;
-        default: os << "unknown";
+    case QueueTypes::in_order:
+        os << "in-order";
+        break;
+    case QueueTypes::out_of_order:
+        os << "out-of-order";
+        break;
+    default:
+        os << "unknown";
     }
 
     return os;
@@ -66,10 +67,17 @@ enum class DumpFormat : uint8_t {
 
 inline std::ostream& operator<<(std::ostream& os, const DumpFormat& val) {
     switch (val) {
-        case DumpFormat::binary: os << "binary"; break;
-        case DumpFormat::text: os << "text"; break;
-        case DumpFormat::text_raw: os << "text_raw"; break;
-        default: os << "unknown";
+    case DumpFormat::binary:
+        os << "binary";
+        break;
+    case DumpFormat::text:
+        os << "text";
+        break;
+    case DumpFormat::text_raw:
+        os << "text_raw";
+        break;
+    default:
+        os << "unknown";
     }
 
     return os;
@@ -98,10 +106,17 @@ enum class DumpTensors : uint8_t {
 
 inline std::ostream& operator<<(std::ostream& os, const DumpTensors& val) {
     switch (val) {
-        case DumpTensors::all: os << "all"; break;
-        case DumpTensors::in: os << "in"; break;
-        case DumpTensors::out: os << "out"; break;
-        default: os << "unknown";
+    case DumpTensors::all:
+        os << "all";
+        break;
+    case DumpTensors::in:
+        os << "in";
+        break;
+    case DumpTensors::out:
+        os << "out";
+        break;
+    default:
+        os << "unknown";
     }
 
     return os;
@@ -206,6 +221,8 @@ static constexpr Property<bool, ov::PropertyMutability::RW> disable_fc_swiglu_fu
 static constexpr Property<bool, ov::PropertyMutability::RW> disable_gated_mlp_fusion{"GPU_DISABLE_GATED_MLP_FUSION"};
 static constexpr Property<bool, ov::PropertyMutability::RW> disable_fake_alignment{"GPU_DISABLE_FAKE_ALIGNMENT"};
 static constexpr Property<bool, ov::PropertyMutability::RW> moe_disable_fusion{"GPU_MOE_DISABLE_FUSION"};
+static constexpr Property<std::string, ov::PropertyMutability::RW> moe_otd_pack_dir{"GPU_MOE_OTD_PACK_DIR"};
+static constexpr Property<std::string, ov::PropertyMutability::RW> moe_otd_pack_mode{"GPU_MOE_OTD_PACK_MODE"};
 static constexpr Property<bool, ov::PropertyMutability::RW> moe_use_micro_gemm_prefill{"GPU_MOE_USE_MICRO_GEMM_PREFILL"};
 static constexpr Property<bool, ov::PropertyMutability::RW> moe_use_gpu_mask_gen_prefill{"GPU_MOE_USE_GPU_MASK_GEN_PREFILL"};
 static constexpr Property<bool, ov::PropertyMutability::RW> moe_use_grouped_gemm_prefill{"GPU_MOE_USE_GROUPED_GEMM_PREFILL"};

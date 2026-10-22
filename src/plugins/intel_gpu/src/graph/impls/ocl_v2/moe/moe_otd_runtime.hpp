@@ -14,6 +14,7 @@
 #include "intel_gpu/primitives/moe_3gemm_fused_compressed.hpp"
 #include "intel_gpu/runtime/stream.hpp"
 #include "lru_cache.hpp"
+#include "moe_otd_pack.hpp"
 #include "moe_otd_trace.hpp"
 #include "openvino/util/parallel_io.hpp"
 
@@ -124,5 +125,31 @@ void fill_weights_memory(cldnn::stream& exec_stream,
                          const std::vector<uint32_t>& experts_list,
                          const std::vector<size_t>& lru_experts,
                          ExpertLoadStats* stats = nullptr);
+
+// Logical (all-expert) layouts of the nine routed tensors in serialized offset order:
+// gate_w, up_w, down_w, gate_s, up_s, down_s, gate_z, up_z, down_z.
+using RoutedTensorLayouts = std::vector<cldnn::layout>;
+
+PackLayerSpec make_pack_spec(const cldnn::MOECompressed::Config& config,
+                             const std::vector<size_t>& weight_bin_offsets,
+                             const RoutedTensorLayouts& layouts,
+                             ParallelWeightReader& weight_reader);
+
+// Builds (or reuses) the layer pack using the same read + transpose as on-demand loading.
+PackBuildResult build_layer_pack(const std::filesystem::path& dir,
+                                 const PackLayerSpec& spec,
+                                 const cldnn::MOECompressed::Config& config,
+                                 const RoutedTensorLayouts& layouts,
+                                 ParallelWeightReader& weight_reader);
+
+// Streams one expert from a pack into `slot` with a single positional read and no transpose.
+void fill_weights_from_pack(cldnn::stream& exec_stream,
+                            const PackLayout& pack,
+                            ParallelWeightReader& pack_reader,
+                            cldnn::moe_weights& wei_mem,
+                            uint32_t expert,
+                            size_t slot,
+                            std::vector<uint8_t>& staging,
+                            ExpertLoadStats* stats = nullptr);
 
 }  // namespace ov::intel_gpu::ocl::moe_otd

@@ -306,4 +306,103 @@ void fill_weights_memory(cldnn::stream& exec_stream,
     }
 }
 
+PackLayerSpec make_pack_spec(const cldnn::MOECompressed::Config& config,
+                             const std::vector<size_t>& weight_bin_offsets,
+                             const RoutedTensorLayouts& layouts,
+                             ParallelWeightReader& weight_reader) {
+    OPENVINO_ASSERT(weight_bin_offsets.size() == pack_tensor_count && layouts.size() == pack_tensor_count, "OTD pack: unexpected routed tensor count");
+    OPENVINO_ASSERT(config.num_expert > 0, "OTD pack: invalid expert count");
+
+    PackLayerSpec spec;
+    spec.num_expert = config.num_expert;
+    spec.source_file_size = weight_reader.file_size();
+    for (size_t t = 0; t < pack_tensor_count; t++) {
+        spec.source_offsets[t] = weight_bin_offsets[t];
+        spec.tensor_bytes[t] = layouts[t].bytes_count() / config.num_expert;
+    }
+    spec.layout_params = {static_cast<uint64_t>(config.hidden_size),
+                          static_cast<uint64_t>(config.inter_size),
+                          static_cast<uint64_t>(config.group_size),
+                          static_cast<uint64_t>(config.has_zp ? 1 : 0)};
+    for (const auto& layout : layouts) {
+        spec.layout_params.push_back(static_cast<uint64_t>(layout.data_type));
+        spec.layout_params.push_back(static_cast<uint64_t>(layout.bytes_count()));
+    }
+
+    uint64_t sample_hash = fnv1a64("");
+    std::vector<char> sample;
+    for (const auto& range : sample_ranges(spec)) {
+        OPENVINO_ASSERT(range.offset + range.size <= spec.source_file_size, "OTD pack: sampled range out of weights file");
+        sample.resize(range.size);
+        weight_reader.read(sample.data(), range.size, range.offset);
+        sample_hash ^= fnv1a64(std::string_view(sample.data(), sample.size())) + 0x9e3779b97f4a7c15ULL + (sample_hash << 6) + (sample_hash >> 2);
+    }
+    spec.source_sample_hash = sample_hash;
+    return spec;
+}
+
+PackBuildResult build_layer_pack(const std::filesystem::path& dir,
+                                 const PackLayerSpec& spec,
+                                 const cldnn::MOECompressed::Config& config,
+                                 const RoutedTensorLayouts& layouts,
+                                 ParallelWeightReader& weight_reader) {
+    auto source = [&](uint32_t expert, size_t tensor, std::vector<uint8_t>& out) {
+        const size_t size = spec.tensor_bytes[tensor];
+        const size_t offset = spec.source_offsets[tensor] + static_cast<size_t>(expert) * size;
+        OPENVINO_ASSERT(offset + size <= spec.source_file_size, "OTD pack: expert range out of weights file");
+        out.resize(size);
+        weight_reader.read(reinterpret_cast<char*>(out.data()), size, offset);
+        maybe_transpose_scale_zp(config, tensor, layouts[tensor], out, size);
+    };
+    return build_pack(dir, spec, source);
+}
+
+void fill_weights_from_pack(cldnn::stream& exec_stream,
+                            const PackLayout& pack,
+                            ParallelWeightReader& pack_reader,
+                            cldnn::moe_weights& wei_mem,
+                            uint32_t expert,
+                            size_t slot,
+                            std::vector<uint8_t>& staging,
+                            ExpertLoadStats* stats) {
+    const std::array<cldnn::memory_ptr, pack_tensor_count> tensors = {
+        {wei_mem.gate_w, wei_mem.up_w, wei_mem.down_w, wei_mem.gate_s, wei_mem.up_s, wei_mem.down_s, wei_mem.gate_z, wei_mem.up_z, wei_mem.down_z}};
+
+    auto* perf = get_perf_counters();
+    const bool timed = perf != nullptr || stats != nullptr;
+    using clock = std::chrono::steady_clock;
+
+    const uint64_t payload = pack.record_payload_bytes();
+    staging.resize(payload);
+
+    ExpertLoadStats load;
+    const auto t0 = timed ? clock::now() : clock::time_point{};
+    pack_reader.read(reinterpret_cast<char*>(staging.data()), payload, pack.record_offset(expert));
+    const auto t1 = timed ? clock::now() : clock::time_point{};
+
+    for (size_t t = 0; t < pack_tensor_count; t++) {
+        const uint64_t size = pack.tensor_bytes(t);
+        const auto& mem = tensors[t];
+        if (size == 0 || !mem) {
+            continue;
+        }
+        OPENVINO_ASSERT(mem->get_layout().bytes_count() / pack.num_expert() == size, "OTD pack: tensor size differs from the resident layout");
+        mem->copy_from(exec_stream, staging.data() + pack.tensor_offset_in_record(t), 0, slot * size, size, true);
+    }
+
+    if (timed) {
+        load.bytes = payload;
+        load.reads = 1;
+        load.read_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        load.copy_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - t1).count());
+        if (perf) {
+            perf->disk_read_latency.record_ns(load.read_ns);
+            perf->record_load(load);
+        }
+        if (stats) {
+            *stats += load;
+        }
+    }
+}
+
 }  // namespace ov::intel_gpu::ocl::moe_otd
