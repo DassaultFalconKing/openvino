@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <stdexcept>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -108,6 +109,10 @@ public:
         return _placement;
     }
 
+    // Checks exactly the payload bytes of a logical expert. Checksums in pack v1 are
+    // indexed by expert ID, NOT by its physical placement index.
+    bool verify_record_payload(uint32_t expert, const void* data, size_t bytes) const;
+
     // Replaces the expert -> record-position mapping; must be a permutation of [0, num_expert).
     void set_placement(std::vector<uint32_t> placement);
 
@@ -120,7 +125,25 @@ private:
 
     PackHeader _header{};
     std::vector<uint32_t> _placement;
+    std::vector<uint64_t> _checksums;
 };
+
+// The serving read boundary: one positional read, then checksum the staging bytes
+// before any caller is allowed to copy them to a resident GPU slot. Reader must
+// throw on short reads. Kept header-only to preserve a direct, allocation-free
+// invocation with ParallelWeightReader and with an offline test reader.
+template <typename Reader>
+void read_verified_record(const PackLayout& pack, uint32_t expert, std::vector<uint8_t>& staging, Reader&& reader) {
+    const auto payload = pack.record_payload_bytes();
+    if (payload > staging.max_size()) {
+        throw std::length_error("OTD pack: expert record exceeds staging capacity");
+    }
+    staging.resize(static_cast<size_t>(payload));
+    reader(reinterpret_cast<char*>(staging.data()), staging.size(), pack.record_offset(expert));
+    if (!pack.verify_record_payload(expert, staging.data(), staging.size())) {
+        throw std::runtime_error("OTD pack: checksum mismatch for expert " + std::to_string(expert));
+    }
+}
 
 // Supplies the device-layout bytes of one tensor of one expert.
 using PackTensorSource = std::function<void(uint32_t expert, size_t tensor, std::vector<uint8_t>& out)>;

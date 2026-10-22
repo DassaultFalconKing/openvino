@@ -375,13 +375,18 @@ void fill_weights_from_pack(cldnn::stream& exec_stream,
     const bool timed = perf != nullptr || stats != nullptr;
     using clock = std::chrono::steady_clock;
 
-    const uint64_t payload = pack.record_payload_bytes();
-    staging.resize(payload);
-
     ExpertLoadStats load;
     const auto t0 = timed ? clock::now() : clock::time_point{};
-    pack_reader.read(reinterpret_cast<char*>(staging.data()), payload, pack.record_offset(expert));
-    const auto t1 = timed ? clock::now() : clock::time_point{};
+    auto t1 = clock::time_point{};
+    read_verified_record(pack, expert, staging, [&](char* data, size_t size, uint64_t offset) {
+        pack_reader.read(data, size, offset);
+        if (timed) {
+            t1 = clock::now();
+        }
+    });
+    // Verify happens on the existing staging buffer; no second read or GPU copy
+    // occurs on a bad checksum. Keep checksum CPU time outside GPU-copy timing.
+    const auto t2 = timed ? clock::now() : clock::time_point{};
 
     for (size_t t = 0; t < pack_tensor_count; t++) {
         const uint64_t size = pack.tensor_bytes(t);
@@ -394,10 +399,10 @@ void fill_weights_from_pack(cldnn::stream& exec_stream,
     }
 
     if (timed) {
-        load.bytes = payload;
+        load.bytes = staging.size();
         load.reads = 1;
         load.read_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
-        load.copy_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - t1).count());
+        load.copy_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - t2).count());
         if (perf) {
             perf->disk_read_latency.record_ns(load.read_ns);
             perf->record_load(load);
