@@ -63,8 +63,8 @@ enum class AcquireKind : char { simultaneous = 'S', one = 'O' };
 //   L,<layer>,<layer_key>,<model_key>,<capacity>,<num_expert>,<top_k>
 //   C,<call>,<t_ns>,<layer>,<kind>,<routed>,<status>,<unique experts, space separated, first-occurrence order>
 //   E,<call>,<t_ns>,<layer>,<expert>,<slot>,<hit>,<evicted or -1>,<bytes>,<reads>,<read_ns>,<transform_ns>,<copy_ns>
-// E records describe every expert the cache actually processed for call <call>; for an
-// overflowing simultaneous call they cover the experts touched before the overflow was detected.
+// E records describe every expert the cache processed for call <call>. An overflowing
+// simultaneous call is rejected before the cache is touched and therefore has no E records.
 // Timestamps are steady-clock nanoseconds since the writer was opened. No prompt data is recorded.
 class TraceWriter {
 public:

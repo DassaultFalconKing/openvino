@@ -4,7 +4,7 @@
 """Deterministic synthetic MOE_OTD_TRACE generator.
 
 Produces traces with the same record semantics as the runtime (exact LRU slots,
-overflowing leases followed by sorted per-expert fallback) for testing the
+overflowing leases rejected untouched and followed by sorted per-expert fallback) for testing the
 simulator and for what-if studies before real router traces exist. Routing is a
 per-layer Zipf distribution over a per-session permutation, so concurrent
 sessions widen the expert union the way independent requests do.
@@ -118,7 +118,7 @@ class _Emitter:
         start = self.t_ns
         pinned: set = set()
         overflow = len(unique) > self.cfg.capacity
-        events = [self._event(call, layer, e, pinned) for e in unique[: self.cfg.capacity]]
+        events = [] if overflow else [self._event(call, layer, e, pinned) for e in unique]
         self.out.write(f"C,{call},{start},{layer},S,{len(routed_ids)},{'overflow' if overflow else 'ok'},{' '.join(map(str, unique))}\n")
         self.out.writelines(events)
         if overflow:

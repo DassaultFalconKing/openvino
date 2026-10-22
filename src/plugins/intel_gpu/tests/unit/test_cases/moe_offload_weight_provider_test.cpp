@@ -86,6 +86,36 @@ TEST(moe_expert_weight_provider, offload_try_acquire_simultaneous_capacity_overf
     ASSERT_FALSE(lease.has_value());
 }
 
+TEST(moe_expert_weight_provider, offload_overflow_leaves_cache_untouched) {
+    // An oversized lease must be rejected before any expert is streamed or evicted.
+    // Loading 2 or 3 here would read "/nonexistent" and throw.
+    MOECompressed::Config config{};
+    OffloadExpertWeightProvider provider(/*capacity=*/2, config, {0, 100, 200, 300}, "/nonexistent");
+
+    cldnn::moe_weights resident{};
+    provider.bind(resident);
+
+    auto& cache = provider.cache();
+    auto [slot0, miss0] = cache.get_lru_item(0);
+    cache.set_filled(slot0);
+    auto [slot1, miss1] = cache.get_lru_item(1);
+    cache.set_filled(slot1);
+
+    std::vector<uint32_t> experts = {2, 3, 0};
+    std::optional<ov::intel_gpu::ocl::moe::ExpertSlotLease> lease;
+    ASSERT_NO_THROW(lease = provider.try_acquire_simultaneous(experts, get_test_stream()));
+    ASSERT_FALSE(lease.has_value());
+
+    ASSERT_EQ(cache.evictions(), 0U);
+    ASSERT_EQ(cache.size(), 2U);
+    auto r0 = cache.lookup(0);
+    auto r1 = cache.lookup(1);
+    ASSERT_TRUE(r0.hit);
+    ASSERT_TRUE(r1.hit);
+    ASSERT_EQ(r0.slot, slot0);
+    ASSERT_EQ(r1.slot, slot1);
+}
+
 TEST(moe_expert_weight_provider, offload_try_acquire_simultaneous_within_capacity) {
     // Same setup but with only 2 unique experts -> should succeed
     MOECompressed::Config config{};

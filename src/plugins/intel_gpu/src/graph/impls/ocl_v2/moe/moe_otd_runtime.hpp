@@ -31,7 +31,6 @@ struct OtdPerfSnapshot {
     uint64_t gpu_copy_ns = 0;
     uint64_t tensor_load_count = 0;
     uint64_t expert_loads = 0;
-    uint64_t overflow_partial_loads = 0;
     uint64_t batched_fallbacks = 0;
     uint64_t grouped_fallbacks = 0;
     uint64_t created_onednn_kernels = 0;
@@ -54,9 +53,6 @@ struct OtdPerfCounters {
     std::atomic<uint64_t> gpu_copy_ns{0};
     std::atomic<uint64_t> tensor_load_count{0};
     std::atomic<uint64_t> expert_loads{0};
-    // Experts streamed by a simultaneous acquisition that then overflowed capacity. They stay
-    // cached, but may be evicted again by the caller's per-expert fallback before use.
-    std::atomic<uint64_t> overflow_partial_loads{0};
     std::atomic<uint64_t> batched_fallbacks{0};
     std::atomic<uint64_t> grouped_fallbacks{0};
     std::atomic<uint64_t> created_onednn_kernels{0};

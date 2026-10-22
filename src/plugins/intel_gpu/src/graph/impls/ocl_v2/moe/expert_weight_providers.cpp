@@ -93,52 +93,41 @@ LRUCache::Lookup OffloadExpertWeightProvider::acquire_slot(uint32_t expert, cldn
 }
 
 std::optional<ExpertSlotLease> OffloadExpertWeightProvider::try_acquire_simultaneous(const std::vector<uint32_t>& experts, cldnn::stream& stream) {
-    // Deduplicate to check capacity
-    std::unordered_map<uint32_t, size_t> expert_to_slot;
-    expert_to_slot.reserve(experts.size());
-
-    std::vector<size_t> slots(experts.size());
-    auto* perf = moe_otd::get_perf_counters();
-    auto* trace = moe_otd::get_trace_writer();
-
-    uint64_t trace_call = 0;
-    if (trace) {
-        std::vector<uint32_t> unique_experts;
+    std::vector<uint32_t> unique_experts;
+    {
         std::unordered_set<uint32_t> seen;
+        seen.reserve(experts.size());
         for (uint32_t expert : experts) {
             if (seen.insert(expert).second) {
                 unique_experts.push_back(expert);
             }
         }
+    }
+
+    auto* trace = moe_otd::get_trace_writer();
+    uint64_t trace_call = 0;
+    if (trace) {
         trace_call = trace->begin_call(_trace_layer, moe_otd::AcquireKind::simultaneous, experts.size(), unique_experts);
     }
 
-    uint64_t loads_in_call = 0;
+    // Reject before touching the cache: loading part of an oversized set would stream experts
+    // and evict resident ones that the caller's per-expert fallback then has to reload.
+    if (unique_experts.size() > _capacity) {
+        if (trace) {
+            trace->end_call(trace_call, true);
+        }
+        return std::nullopt;
+    }
+
+    std::unordered_map<uint32_t, size_t> expert_to_slot;
+    expert_to_slot.reserve(unique_experts.size());
+    for (uint32_t expert : unique_experts) {
+        expert_to_slot.emplace(expert, acquire_slot(expert, stream, trace_call).slot);
+    }
+
+    std::vector<size_t> slots(experts.size());
     for (size_t i = 0; i < experts.size(); i++) {
-        const uint32_t expert = experts[i];
-        auto it = expert_to_slot.find(expert);
-        if (it != expert_to_slot.end()) {
-            slots[i] = it->second;
-            continue;
-        }
-
-        // Check if we would exceed capacity
-        if (expert_to_slot.size() >= _capacity) {
-            if (perf) {
-                perf->overflow_partial_loads.fetch_add(loads_in_call, std::memory_order_relaxed);
-            }
-            if (trace) {
-                trace->end_call(trace_call, true);
-            }
-            return std::nullopt;
-        }
-
-        const auto item = acquire_slot(expert, stream, trace_call);
-        if (!item.hit) {
-            loads_in_call++;
-        }
-        expert_to_slot.emplace(expert, item.slot);
-        slots[i] = item.slot;
+        slots[i] = expert_to_slot.at(experts[i]);
     }
 
     if (trace) {

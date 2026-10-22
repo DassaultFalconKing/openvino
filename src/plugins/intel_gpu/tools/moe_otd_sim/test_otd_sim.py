@@ -143,13 +143,20 @@ class ReplayTest(unittest.TestCase):
         self.assertGreater(tiny["total"]["overflow_calls"], 0)
         self.assertIn("fallback", tiny["by_phase"])
 
-    def test_precheck_never_loads_for_overflowing_leases(self):
+    def test_runtime_never_loads_for_overflowing_leases(self):
         _, trace, _ = synth(capacity=8, sessions=3, prompt_tokens=16)
-        base = replay(trace, "lru")["total"]
-        pre = replay(trace, "lru", precheck=True)["total"]
-        self.assertGreater(base["overflow_partial_loads"], 0)
-        self.assertEqual(pre["overflow_partial_loads"], 0)
-        self.assertEqual(pre["overflow_calls"], base["overflow_calls"])
+        fixed = replay(trace, "lru")["total"]
+        legacy = replay(trace, "lru", legacy_partial_lease=True)["total"]
+        self.assertEqual(fixed["overflow_partial_loads"], 0)
+        self.assertGreater(legacy["overflow_partial_loads"], 0)
+        self.assertEqual(fixed["overflow_calls"], legacy["overflow_calls"])
+        self.assertLess(fixed["misses"], legacy["misses"])
+
+    def test_overflowing_lease_has_no_expert_records(self):
+        _, trace, _ = synth(capacity=8, sessions=3, prompt_tokens=16)
+        overflowing = [c for c in trace.calls if c.kind == "S" and c.overflow]
+        self.assertTrue(overflowing)
+        self.assertTrue(all(not c.events for c in overflowing))
 
     def test_opt_is_lower_bound_and_compulsory_misses_hold(self):
         _, trace, _ = synth(capacity=16, sessions=2, spec_window=3)

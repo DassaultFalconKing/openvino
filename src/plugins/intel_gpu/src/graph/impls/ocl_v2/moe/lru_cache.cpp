@@ -6,8 +6,12 @@
 
 namespace ov::intel_gpu::ocl::moe {
 
-LRUCache::LRUCache(size_t max_total_experts) : m_max_total_experts(max_total_experts), m_total_experts(0), m_to_filled_lru_expert_no(0) {
+LRUCache::LRUCache(size_t max_total_experts) : m_max_total_experts(max_total_experts), m_total_experts(0) {
     m_filled_list.resize(max_total_experts, false);
+    m_free_slots.reserve(max_total_experts);
+    for (size_t slot = max_total_experts; slot > 0; --slot) {
+        m_free_slots.push_back(slot - 1);
+    }
 }
 
 void LRUCache::move_to_end(std::list<Node>::iterator it) {
@@ -17,27 +21,25 @@ void LRUCache::move_to_end(std::list<Node>::iterator it) {
     m_list.splice(m_list.end(), m_list, it);
 }
 
-std::optional<size_t> LRUCache::evict_one_unlocked() {
+std::optional<LRUCache::Node> LRUCache::evict_one_unlocked() {
     if (m_list.empty()) {
         return std::nullopt;
     }
 
-    auto& oldest = m_list.front();
-    const size_t evicted = oldest.expert;
-
+    const Node oldest = m_list.front();
     m_filled_list[oldest.lru_expert_no] = false;
-    m_to_filled_lru_expert_no = oldest.lru_expert_no;
-    Key key{oldest.expert};
-    m_map.erase(key);
+    m_map.erase(Key{oldest.expert});
     m_list.pop_front();
     --m_total_experts;
     ++m_evictions;
-    return evicted;
+    return oldest;
 }
 
 void LRUCache::evict_one() {
     std::lock_guard<std::mutex> lock(m_mutex);
-    evict_one_unlocked();
+    if (auto evicted = evict_one_unlocked()) {
+        m_free_slots.push_back(evicted->lru_expert_no);
+    }
 }
 
 std::pair<size_t, bool> LRUCache::get_lru_item(size_t expert) {
@@ -53,11 +55,17 @@ LRUCache::Lookup LRUCache::lookup(size_t expert) {
     auto it = m_map.find(key);
     if (it == m_map.end()) {
         size_t to_filled_no = 0;
-        if (m_total_experts >= m_max_total_experts) {
-            result.evicted = evict_one_unlocked();
-            to_filled_no = m_to_filled_lru_expert_no;
+        if (m_free_slots.empty()) {
+            const auto evicted = evict_one_unlocked();
+            if (!evicted) {
+                // Zero-capacity cache: nothing can be resident.
+                return result;
+            }
+            result.evicted = evicted->expert;
+            to_filled_no = evicted->lru_expert_no;
         } else {
-            to_filled_no = m_total_experts;
+            to_filled_no = m_free_slots.back();
+            m_free_slots.pop_back();
         }
         m_list.push_back(Node{expert, to_filled_no});
         auto new_it = std::prev(m_list.end());
