@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <memory>
+#include <string>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -25,12 +27,20 @@ public:
         uint64_t system_bytes = 0, gpu_budget_bytes = 0, os_reserve_bytes = 0;
     };
     struct Ticket { uint64_t id; };
+    struct Demand { Class memory_class; uint64_t bytes; bool gpu_visible; };
     explicit UmaAdmissionLedger(ObservedFree available) : free_(available) {}
     // Refresh only after all outstanding provisional reservations retire.
     // Runtime reconciliation with WDDM/OS accounting needs a separate adapter.
     void reset(ObservedFree available) {
         std::lock_guard<std::mutex> lock(mu_);
         if (!active_.empty()) throw std::logic_error("live UMA reservations");
+        free_ = available;
+    }
+    // A fresh OS/WDDM sample is allowed while reservations exist. This
+    // conservative accounting may double-count already-committed allocations,
+    // but cannot admit more than either observed free constraint permits.
+    void observe(ObservedFree available) {
+        std::lock_guard<std::mutex> lock(mu_);
         free_ = available;
     }
     std::optional<Ticket> reserve(Class memory_class, uint64_t bytes, bool gpu_visible) {
@@ -49,6 +59,38 @@ public:
         if (gpu_visible) gpu_used_ += bytes;
         return Ticket{id};
     }
+    // All-or-nothing admission for a model + KV + workspace + staging cohort.
+    // Neither failed admission nor integer overflow mutates the ledger.
+    std::optional<std::vector<Ticket>> reserve_batch(const std::vector<Demand>& demands) {
+        if (demands.empty()) return std::nullopt;
+        std::lock_guard<std::mutex> lock(mu_);
+        uint64_t system_add = 0, gpu_add = 0;
+        for (const auto& demand : demands) {
+            if (!demand.bytes || demand.bytes > UINT64_MAX - system_add)
+                return std::nullopt;
+            system_add += demand.bytes;
+            if (demand.gpu_visible) {
+                if (demand.bytes > UINT64_MAX - gpu_add) return std::nullopt;
+                gpu_add += demand.bytes;
+            }
+        }
+        const uint64_t system_budget = free_.system_bytes > free_.os_reserve_bytes ?
+            free_.system_bytes - free_.os_reserve_bytes : 0;
+        if (system_add > system_budget || system_used_ > system_budget - system_add ||
+            gpu_add > free_.gpu_budget_bytes || gpu_used_ > free_.gpu_budget_bytes - gpu_add ||
+            demands.size() > UINT64_MAX - next_id_)
+            return std::nullopt;
+        std::vector<Ticket> tickets;
+        tickets.reserve(demands.size());
+        for (const auto& demand : demands) {
+            const auto id = ++next_id_;
+            active_.emplace(id, Reservation{demand.memory_class, demand.bytes, demand.gpu_visible});
+            tickets.push_back({id});
+        }
+        system_used_ += system_add;
+        gpu_used_ += gpu_add;
+        return tickets;
+    }
     void release(Ticket t) {
         std::lock_guard<std::mutex> lock(mu_);
         auto it = active_.find(t.id);
@@ -56,6 +98,10 @@ public:
         system_used_ -= it->second.bytes;
         if (it->second.gpu_visible) gpu_used_ -= it->second.bytes;
         active_.erase(it);
+    }
+    uint64_t gpu_reserved() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        return gpu_used_;
     }
     uint64_t system_reserved() const {
         std::lock_guard<std::mutex> lock(mu_);
@@ -67,6 +113,28 @@ private:
     ObservedFree free_;
     uint64_t next_id_ = 0, system_used_ = 0, gpu_used_ = 0;
     std::map<uint64_t, Reservation> active_;
+};
+
+// Shared process-wide registry keyed by the *executing* GPU LUID, not
+// model/layer. The same ledger must be used by model/KV/workspace/OTD owners.
+// It does not automatically intercept GPU allocator calls: until those owners
+// register their actual allocations, N3 native runtime admission remains OFF.
+class GlobalUmaAdmission {
+public:
+    static std::shared_ptr<UmaAdmissionLedger> for_adapter(
+        const std::string& luid_hex, UmaAdmissionLedger::ObservedFree initial) {
+        if (luid_hex.size() != 16 ||
+            !std::all_of(luid_hex.begin(), luid_hex.end(), [](char c) {
+                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+            })) throw std::invalid_argument("exact 16-hex GPU LUID required");
+        static std::mutex registry_mutex;
+        static std::map<std::string, std::weak_ptr<UmaAdmissionLedger>> registry;
+        std::lock_guard<std::mutex> lock(registry_mutex);
+        if (auto existing = registry[luid_hex].lock()) return existing;
+        auto ledger = std::make_shared<UmaAdmissionLedger>(initial);
+        registry[luid_hex] = ledger;
+        return ledger;
+    }
 };
 
 struct PredictedExpert {
