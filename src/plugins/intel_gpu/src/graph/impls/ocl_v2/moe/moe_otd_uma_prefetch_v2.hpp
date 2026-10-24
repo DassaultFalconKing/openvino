@@ -25,6 +25,7 @@ public:
         uint64_t system_bytes = 0, gpu_budget_bytes = 0, os_reserve_bytes = 0;
     };
     struct Ticket { uint64_t id; };
+    struct Request { Class memory_class; uint64_t bytes; bool gpu_visible; };
     explicit UmaAdmissionLedger(ObservedFree available) : free_(available) {}
     // Refresh only after all outstanding provisional reservations retire.
     // Runtime reconciliation with WDDM/OS accounting needs a separate adapter.
@@ -49,6 +50,43 @@ public:
         if (gpu_visible) gpu_used_ += bytes;
         return Ticket{id};
     }
+    // N3: a multi-resource admission is all-or-none. This is needed when a
+    // predicted expert requires both CPU staging and GPU-visible workspace.
+    // Observed OS and WDDM headroom overlap, never sum them.
+    std::optional<std::vector<Ticket>> reserve_batch(const std::vector<Request>& requests) {
+        if (requests.empty()) return std::nullopt;
+        std::lock_guard<std::mutex> lock(mu_);
+        uint64_t sys = 0, gpu = 0;
+        for (const auto& r : requests) {
+            if (!r.bytes || r.bytes > UINT64_MAX - sys) return std::nullopt;
+            sys += r.bytes;
+            if (r.gpu_visible) {
+                if (r.bytes > UINT64_MAX - gpu) return std::nullopt;
+                gpu += r.bytes;
+            }
+        }
+        const uint64_t sys_budget = free_.system_bytes > free_.os_reserve_bytes ?
+            free_.system_bytes - free_.os_reserve_bytes : 0;
+        if (sys > sys_budget || system_used_ > sys_budget - sys ||
+            gpu > free_.gpu_budget_bytes || gpu_used_ > free_.gpu_budget_bytes - gpu ||
+            requests.size() > UINT64_MAX - next_id_) return std::nullopt;
+        std::vector<Ticket> tickets;
+        tickets.reserve(requests.size());
+        try {
+            for (const auto& r : requests) {
+                const auto id = ++next_id_;
+                active_.emplace(id, Reservation{r.memory_class, r.bytes, r.gpu_visible});
+                tickets.push_back(Ticket{id});
+            }
+        } catch (...) {
+            // Counter IDs remain monotonic; neither committed sum changes.
+            for (const auto& t : tickets) active_.erase(t.id);
+            throw;
+        }
+        system_used_ += sys;
+        gpu_used_ += gpu;
+        return tickets;
+    }
     void release(Ticket t) {
         std::lock_guard<std::mutex> lock(mu_);
         auto it = active_.find(t.id);
@@ -56,6 +94,10 @@ public:
         system_used_ -= it->second.bytes;
         if (it->second.gpu_visible) gpu_used_ -= it->second.bytes;
         active_.erase(it);
+    }
+    uint64_t gpu_reserved() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        return gpu_used_;
     }
     uint64_t system_reserved() const {
         std::lock_guard<std::mutex> lock(mu_);
