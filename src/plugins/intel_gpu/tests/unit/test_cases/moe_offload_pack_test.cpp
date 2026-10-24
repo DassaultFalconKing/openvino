@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "ocl_v2/moe/moe_otd_pack.hpp"
+#include "ocl_v2/moe/moe_otd_placement_v2.hpp"
+#include "ocl_v2/moe/moe_otd_residency_v2.hpp"
 #include "test_utils/test_utils.h"
 
 using namespace ov::intel_gpu::ocl::moe_otd;
@@ -478,4 +480,85 @@ TEST(moe_otd_pack, failing_source_leaves_no_pack) {
     };
     ASSERT_THROW(build_pack(dir.path, spec, short_source), std::runtime_error);
     ASSERT_TRUE(std::filesystem::is_empty(dir.path));
+}
+
+
+// Native profile-guided placement: same Pack V1 payload ABI, logical IDs preserved.
+TEST(moe_otd_pack, v2_placement_handoff_builds_correct_native_expert_order) {
+    TempDir dir;
+    const auto spec = make_spec();
+    std::vector<uint32_t> desired = {5, 0, 4, 1, 3, 2};
+    std::vector<uint8_t> bytes(32 + spec.num_expert * 4);
+    std::memcpy(bytes.data(), "OTDPLACE", 8);
+    auto put32 = [&](size_t offset, uint32_t value) {
+        for (size_t i = 0; i < 4; ++i) bytes[offset + i] = static_cast<uint8_t>(value >> (8 * i));
+    };
+    auto put64 = [&](size_t offset, uint64_t value) {
+        for (size_t i = 0; i < 8; ++i) bytes[offset + i] = static_cast<uint8_t>(value >> (8 * i));
+    };
+    put32(8, 2);
+    put32(12, static_cast<uint32_t>(spec.num_expert));
+    put64(16, spec.key());
+    for (size_t i = 0; i < desired.size(); ++i) put32(24 + 4 * i, desired[i]);
+    std::vector<uint8_t> prefix(bytes.begin(), bytes.end() - 8);
+    put64(bytes.size() - 8, placement_fnv64(prefix));
+    ASSERT_EQ(parse_placement_v2(bytes, spec), desired);
+
+    auto name = spec.file_name();
+    name.replace(name.size() - 5, 5, ".placement");
+    {
+        std::ofstream out(dir.path / name, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+    const auto from_disk = load_placement_v2(dir.path, spec);
+    ASSERT_EQ(from_disk, desired);
+    const auto built = build_pack(dir.path, spec, pattern_source(spec), from_disk);
+    const auto layout = PackLayout::open(built.path, spec);
+    ASSERT_TRUE(layout.has_value());
+    EXPECT_EQ(layout->placement(), desired);
+    EXPECT_EQ(verify_pack(built.path, spec), 0U);
+    std::vector<uint8_t> corrupt = bytes;
+    corrupt[24] ^= 0x10;
+    EXPECT_THROW(parse_placement_v2(corrupt, spec), std::runtime_error);
+    corrupt = bytes;
+    corrupt[16] ^= 0x01;
+    EXPECT_THROW(parse_placement_v2(corrupt, spec), std::runtime_error);
+    corrupt = bytes;
+    corrupt[12] ^= 0x01;
+    EXPECT_THROW(parse_placement_v2(corrupt, spec), std::runtime_error);
+    corrupt = bytes;
+    corrupt.pop_back();
+    EXPECT_THROW(parse_placement_v2(corrupt, spec), std::runtime_error);
+}
+
+TEST(moe_otd_pack, v2_placement_requires_every_compiled_layer) {
+    TempDir empty;
+    EXPECT_THROW(load_placement_v2(empty.path, make_spec()), std::runtime_error);
+}
+
+
+TEST(moe_otd_pack, v2_resident_priority_file_clamps_hot_admission) {
+    TempDir dir;
+    const auto spec = make_spec(6);
+    // [hot, warm, hot, cold, hot, cold]. Capacity 2 allows only one
+    // hot-priority expert, keeping one slot available for demand.
+    std::vector<uint8_t> tiers = {2, 1, 2, 0, 2, 0};
+    std::vector<uint8_t> bytes(32 + spec.num_expert);
+    std::memcpy(bytes.data(), "OTDRESID", 8);
+    auto put32 = [&](size_t offset, uint32_t value) {
+        for (size_t i = 0; i < 4; ++i) bytes[offset + i] = uint8_t(value >> (8 * i));
+    };
+    auto put64 = [&](size_t offset, uint64_t value) {
+        for (size_t i = 0; i < 8; ++i) bytes[offset + i] = uint8_t(value >> (8 * i));
+    };
+    put32(8, 2);
+    put32(12, static_cast<uint32_t>(spec.num_expert));
+    put64(16, spec.key());
+    std::copy(tiers.begin(), tiers.end(), bytes.begin() + 24);
+    put64(bytes.size() - 8,
+          placement_fnv64(std::vector<uint8_t>(bytes.begin(), bytes.end() - 8)));
+    auto parsed = parse_residency_v2(bytes, spec, 2);
+    EXPECT_EQ(parsed, (std::vector<uint8_t>{2, 1, 1, 0, 1, 0}));
+    bytes[24] = 7;
+    EXPECT_THROW(parse_residency_v2(bytes, spec, 2), std::runtime_error);
 }

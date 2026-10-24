@@ -14,6 +14,8 @@
 // primitive_ocl_base.hpp is the established prelude that brings them in.
 #include "impls/ocl_v2/primitive_ocl_base.hpp"
 #include "moe_otd_runtime.hpp"
+#include "moe_otd_placement_v2.hpp"
+#include "moe_otd_residency_v2.hpp"
 
 namespace ov::intel_gpu::ocl::moe {
 
@@ -52,9 +54,27 @@ void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const s
     OPENVINO_ASSERT(!dir.empty(), "MoE OTD pack mode requires GPU_MOE_OTD_PACK_DIR");
 
     const auto spec = moe_otd::make_pack_spec(_config, _weight_bin_offsets, layouts, _weight_reader);
+    // Soft profile-scored residency priority. OFF unless an immutable plan dir
+    // was provided explicitly; no prefetch, USM-host allocator or eviction
+    // of live GPU reader ownership is enabled by this policy.
+    if (const char* residency_dir = std::getenv("OV_GPU_MOE_OTD_RESIDENCY_DIR")) {
+        OPENVINO_ASSERT(*residency_dir, "OTD residency directory must not be empty");
+        const auto tiers = moe_otd::load_residency_v2(residency_dir, spec, _capacity);
+        _cache->set_priorities(tiers);
+    } else {
+        _cache->set_priorities({});
+    }
     const auto path = dir / spec.file_name();
     if (mode == moe_otd::PackMode::build) {
-        const auto built = moe_otd::build_layer_pack(dir, spec, _config, layouts, _weight_reader);
+        // Profile-derived placements are accepted ONLY during build, never by
+        // altering the router or a resident slot. A configured directory is
+        // exhaustive: missing layer keys fail closed, not identity fallback.
+        std::vector<uint32_t> placement;
+        if (const char* layout_dir = std::getenv("OV_GPU_MOE_OTD_PLACEMENT_DIR")) {
+            OPENVINO_ASSERT(*layout_dir, "OTD placement directory cannot be empty");
+            placement = moe_otd::load_placement_v2(layout_dir, spec);
+        }
+        const auto built = moe_otd::build_layer_pack(dir, spec, _config, layouts, _weight_reader, placement);
         // Layers compile on parallel threads; one write per line keeps messages from interleaving.
         std::cerr << ("MOE OTD pack " + std::string(built.reused_existing ? "reused " : "built ") + built.path.filename().string() +
                       " bytes=" + std::to_string(built.bytes_written) + "\n");

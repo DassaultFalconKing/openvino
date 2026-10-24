@@ -4,6 +4,8 @@
 
 #include "lru_cache.hpp"
 
+#include <stdexcept>
+
 namespace ov::intel_gpu::ocl::moe {
 
 LRUCache::LRUCache(size_t max_total_experts) : m_max_total_experts(max_total_experts), m_total_experts(0) {
@@ -12,6 +14,20 @@ LRUCache::LRUCache(size_t max_total_experts) : m_max_total_experts(max_total_exp
     for (size_t slot = max_total_experts; slot > 0; --slot) {
         m_free_slots.push_back(slot - 1);
     }
+}
+
+void LRUCache::set_priorities(std::vector<uint8_t> priorities) {
+    for (const auto p : priorities) {
+        if (p > 2) {
+            throw std::invalid_argument("OTD resident priority must be 0, 1 or 2");
+        }
+    }
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_priorities = std::move(priorities);
+}
+
+uint8_t LRUCache::priority_of(size_t expert) const {
+    return expert < m_priorities.size() ? m_priorities[expert] : uint8_t{0};
 }
 
 void LRUCache::move_to_end(std::list<Node>::iterator it) {
@@ -26,10 +42,20 @@ std::optional<LRUCache::Node> LRUCache::evict_one_unlocked() {
         return std::nullopt;
     }
 
-    const Node oldest = m_list.front();
+    // PGP tiers are a soft preference, not strict pins. If every resident
+    // is protected, a demand miss still evicts the oldest of the least-high
+    // tier. This avoids unbounded admission stalls under changing routing.
+    auto victim = m_list.begin();
+    for (auto it = std::next(m_list.begin()); it != m_list.end(); ++it) {
+        if (priority_of(it->expert) < priority_of(victim->expert)) {
+            victim = it;
+            if (priority_of(victim->expert) == 0) break;
+        }
+    }
+    const Node oldest = *victim;
     m_filled_list[oldest.lru_expert_no] = false;
     m_map.erase(Key{oldest.expert});
-    m_list.pop_front();
+    m_list.erase(victim);
     --m_total_experts;
     ++m_evictions;
     return oldest;

@@ -439,3 +439,37 @@ TEST(moe_lru_cache, concurrent_access) {
     ASSERT_LE(cache.size(), cap);
 }
 
+
+
+TEST(moe_lru_cache, pgp_soft_hot_admission_prefers_cold_then_warm_then_lru) {
+    LRUCache cache(3);
+    cache.set_priorities({2, 1, 0, 0, 0, 0, 0});
+    const auto hot = cache.lookup(0);
+    cache.set_filled(hot.slot);
+    const auto warm = cache.lookup(1);
+    cache.set_filled(warm.slot);
+    const auto cold = cache.lookup(2);
+    cache.set_filled(cold.slot);
+    // Even though hot expert 0 was loaded first, cold 2 is least protected.
+    const auto next = cache.lookup(3);
+    EXPECT_EQ(next.evicted, std::optional<size_t>(2));
+    cache.set_filled(next.slot);
+    // Now cold 3 is chosen before warm 1 or hot 0.
+    const auto further = cache.lookup(4);
+    EXPECT_EQ(further.evicted, std::optional<size_t>(3));
+    cache.set_filled(further.slot);
+    // Restore baseline LRU exactly with an empty priority vector.
+    cache.set_priorities({});
+    const auto legacy = cache.lookup(5);
+    EXPECT_EQ(legacy.evicted, std::optional<size_t>(0));
+}
+
+TEST(moe_lru_cache, pgp_demand_always_progresses_when_all_residents_are_hot) {
+    LRUCache cache(2);
+    cache.set_priorities({2, 2, 2});
+    cache.lookup(0);
+    cache.lookup(1);
+    EXPECT_EQ(cache.lookup(2).evicted, std::optional<size_t>(0));
+    EXPECT_EQ(cache.size(), 2U);
+    EXPECT_THROW(cache.set_priorities({0, 3}), std::invalid_argument);
+}
