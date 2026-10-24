@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <cstdint>
 
 namespace ov::intel_gpu::ocl::moe {
 
@@ -26,6 +27,10 @@ public:
     std::pair<size_t, bool> get_lru_item(size_t expert);
     Lookup lookup(size_t expert);
 
+    // Profile policy tiers: 0=cold/default LRU, 1=warm, 2=hot.
+    // Advisory priorities cannot prohibit a demand miss: least-protected
+    // resident wins; oldest wins ties. Empty vector restores exact LRU.
+    void set_priorities(std::vector<uint8_t> priorities);
     void evict_one();
 
     size_t size() const {
@@ -81,9 +86,11 @@ private:
     std::vector<bool> m_filled_list;
     // Unoccupied slots, lowest index at the back so fresh caches assign slots 0, 1, 2, ...
     std::vector<size_t> m_free_slots;
+    std::vector<uint8_t> m_priorities;
     std::unordered_map<Key, std::list<Node>::iterator, KeyHash> m_map;
     mutable std::mutex m_mutex;
 
+    uint8_t priority_of(size_t expert) const;
     void move_to_end(std::list<Node>::iterator it);
     std::optional<Node> evict_one_unlocked();
 };

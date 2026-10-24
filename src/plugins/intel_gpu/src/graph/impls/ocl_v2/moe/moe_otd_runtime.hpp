@@ -147,7 +147,8 @@ PackBuildResult build_layer_pack(const std::filesystem::path& dir,
                                  const PackLayerSpec& spec,
                                  const cldnn::MOECompressed::Config& config,
                                  const RoutedTensorLayouts& layouts,
-                                 ParallelWeightReader& weight_reader);
+                                 ParallelWeightReader& weight_reader,
+                                 const std::vector<uint32_t>& placement = {});
 
 // Streams one expert from a pack into `slot` with a single positional read and no transpose.
 void fill_weights_from_pack(cldnn::stream& exec_stream,

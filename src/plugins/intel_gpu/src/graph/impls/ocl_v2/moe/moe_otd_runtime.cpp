@@ -354,7 +354,8 @@ PackBuildResult build_layer_pack(const std::filesystem::path& dir,
                                  const PackLayerSpec& spec,
                                  const cldnn::MOECompressed::Config& config,
                                  const RoutedTensorLayouts& layouts,
-                                 ParallelWeightReader& weight_reader) {
+                                 ParallelWeightReader& weight_reader,
+                                 const std::vector<uint32_t>& placement) {
     auto source = [&](uint32_t expert, size_t tensor, std::vector<uint8_t>& out) {
         const size_t size = spec.tensor_bytes[tensor];
         const size_t offset = spec.source_offsets[tensor] + static_cast<size_t>(expert) * size;
@@ -363,7 +364,7 @@ PackBuildResult build_layer_pack(const std::filesystem::path& dir,
         weight_reader.read(reinterpret_cast<char*>(out.data()), size, offset);
         maybe_transpose_scale_zp(config, tensor, layouts[tensor], out, size);
     };
-    return build_pack(dir, spec, source);
+    return build_pack(dir, spec, source, placement);
 }
 
 void fill_weights_from_pack(cldnn::stream& exec_stream,
