@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "ocl_v2/moe/moe_otd_pack.hpp"
-#include "test_utils/test_utils.h"
+#include <gtest/gtest.h>
 
 using namespace ov::intel_gpu::ocl::moe_otd;
 

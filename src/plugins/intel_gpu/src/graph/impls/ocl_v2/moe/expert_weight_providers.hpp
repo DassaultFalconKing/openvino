@@ -60,10 +60,12 @@ public:
 // at construction from graph-build time information.
 class OffloadExpertWeightProvider : public IExpertWeightProvider {
 public:
+    // trace_layer_name only feeds a hashed layer key in MOE_OTD_TRACE output.
     OffloadExpertWeightProvider(size_t capacity,
                                 const cldnn::MOECompressed::Config& config,
                                 std::vector<size_t> weight_bin_offsets,
-                                std::filesystem::path weights_path);
+                                std::filesystem::path weights_path,
+                                const std::string& trace_layer_name = {});
 
     size_t resident_capacity() const override {
         return _capacity;
@@ -81,6 +83,15 @@ public:
     std::optional<ExpertSlotLease> try_acquire_simultaneous(const std::vector<uint32_t>& experts, cldnn::stream& stream) override;
     size_t acquire_one(uint32_t expert, cldnn::stream& stream) override;
 
+    // Selects pre-packed expert loading for this layer. `layouts` are the logical all-expert
+    // layouts of the nine routed tensors in serialized offset order. Mode `use` falls back to
+    // the weights file when no valid pack exists, `require` throws, `build` writes a missing pack.
+    void configure_pack(moe_otd::PackMode mode, const std::filesystem::path& dir, const moe_otd::RoutedTensorLayouts& layouts);
+
+    bool uses_pack() const {
+        return _pack.has_value();
+    }
+
     LRUCache& cache() {
         return *_cache;
     }
@@ -90,12 +101,21 @@ public:
     }
 
 private:
+    LRUCache::Lookup acquire_slot(uint32_t expert, cldnn::stream& stream, uint64_t trace_call,
+                                 const std::vector<size_t>& required_experts = {});
+
     size_t _capacity = 0;
+    uint32_t _trace_layer = 0;
     cldnn::MOECompressed::Config _config{};
     std::vector<size_t> _weight_bin_offsets;
     std::filesystem::path _weights_path;
     std::shared_ptr<LRUCache> _cache;
     moe_otd::ParallelWeightReader _weight_reader;
+    std::optional<moe_otd::PackLayout> _pack;
+    std::unique_ptr<moe_otd::ParallelWeightReader> _pack_reader;
+    // Content-keyed file name only, so diagnostics carry no machine-specific directory.
+    std::string _pack_name;
+    std::vector<uint8_t> _pack_staging;
     cldnn::moe_weights* _resident = nullptr;
     bool _bound = false;
 };

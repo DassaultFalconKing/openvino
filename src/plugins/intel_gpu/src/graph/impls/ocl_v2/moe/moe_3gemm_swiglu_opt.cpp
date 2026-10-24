@@ -951,6 +951,41 @@ public:
     bool use_grouped_gemm_prefill = false;
     size_t batched_gemv_threshold = 32;  // token_num <= threshold uses batched GEMV path
 
+    void create_weight_provider(const moe_3gemm_fused_compressed& desc, const kernel_impl_params& params) {
+        if (desc._otd.lru_expert_num == 0) {
+            _weight_provider = std::make_shared<ResidentExpertWeightProvider>();
+            return;
+        }
+        auto provider = std::make_shared<OffloadExpertWeightProvider>(desc._otd.lru_expert_num,
+                                                                      desc._config,
+                                                                      desc._otd.weight_bin_offsets,
+                                                                      desc._otd.weights_path,
+                                                                      desc.id);
+
+        if (params.prog != nullptr) {
+            const auto& config = params.get_program().get_config();
+            const auto mode = moe_otd::parse_pack_mode(config.get_moe_otd_pack_mode());
+            OPENVINO_ASSERT(mode.has_value(), "Unsupported GPU_MOE_OTD_PACK_MODE: ", config.get_moe_otd_pack_mode());
+            if (*mode != moe_otd::PackMode::off) {
+                static constexpr std::array<MOE3GemmInputIndex, moe_otd::pack_tensor_count> routed_inputs = {MOE3GemmInputIndex::WEIGHT_0,
+                                                                                                             MOE3GemmInputIndex::WEIGHT_1,
+                                                                                                             MOE3GemmInputIndex::WEIGHT_2,
+                                                                                                             MOE3GemmInputIndex::SCALE_0,
+                                                                                                             MOE3GemmInputIndex::SCALE_1,
+                                                                                                             MOE3GemmInputIndex::SCALE_2,
+                                                                                                             MOE3GemmInputIndex::ZP_0,
+                                                                                                             MOE3GemmInputIndex::ZP_1,
+                                                                                                             MOE3GemmInputIndex::ZP_2};
+                moe_otd::RoutedTensorLayouts layouts;
+                for (auto idx : routed_inputs) {
+                    layouts.push_back(params.get_input_layout(static_cast<size_t>(idx)));
+                }
+                provider->configure_pack(*mode, config.get_moe_otd_pack_dir(), layouts);
+            }
+        }
+        _weight_provider = std::move(provider);
+    }
+
     moe_3gemm_swiglu_opt_impl() : PrimitiveImplOCL(moe_3gemm_swiglu_opt::get_type_info_static()) {}
     moe_3gemm_swiglu_opt_impl(const program_node& node, const RuntimeParams& params) : moe_3gemm_swiglu_opt_impl() {
         if (m_rt_params == nullptr) {
@@ -996,15 +1031,7 @@ public:
         GPU_DEBUG_TRACE_DETAIL << "[DEBUG] moe_3gemm_swiglu_opt_impl(): batched_gemv_threshold=" << batched_gemv_threshold << std::endl;
 
         // Weight provider: select based on OTD configuration.
-        auto cur_moe = node.as<moe_3gemm_fused_compressed>().get_primitive();
-        if (cur_moe->_otd.lru_expert_num > 0) {
-            _weight_provider = std::make_shared<OffloadExpertWeightProvider>(cur_moe->_otd.lru_expert_num,
-                                                                             cur_moe->_config,
-                                                                             cur_moe->_otd.weight_bin_offsets,
-                                                                             cur_moe->_otd.weights_path);
-        } else {
-            _weight_provider = std::make_shared<ResidentExpertWeightProvider>();
-        }
+        create_weight_provider(*node.as<moe_3gemm_fused_compressed>().get_primitive(), params);
 
         // Don't change the order of stages
         add_stage(gather, params);
@@ -1275,14 +1302,7 @@ public:
         const kernel_impl_params* impl_params = reinterpret_cast<kernel_impl_params*>(ib.getKernelImplParams());
         auto cur_moe = impl_params->typed_desc<moe_3gemm_fused_compressed>();
         init(cur_moe);
-        if (cur_moe->_otd.lru_expert_num > 0) {
-            _weight_provider = std::make_shared<OffloadExpertWeightProvider>(cur_moe->_otd.lru_expert_num,
-                                                                             cur_moe->_config,
-                                                                             cur_moe->_otd.weight_bin_offsets,
-                                                                             cur_moe->_otd.weights_path);
-        } else {
-            _weight_provider = std::make_shared<ResidentExpertWeightProvider>();
-        }
+        create_weight_provider(*cur_moe, *impl_params);
     }
 
     [[nodiscard]] std::unique_ptr<primitive_impl> clone() const override {

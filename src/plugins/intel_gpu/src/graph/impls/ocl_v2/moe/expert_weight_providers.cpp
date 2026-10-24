@@ -4,7 +4,9 @@
 
 #include "expert_weight_providers.hpp"
 
+#include <iostream>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 // moe_otd_runtime.hpp is not self-contained: it relies on cldnn graph/runtime
@@ -12,6 +14,8 @@
 // primitive_ocl_base.hpp is the established prelude that brings them in.
 #include "impls/ocl_v2/primitive_ocl_base.hpp"
 #include "moe_otd_runtime.hpp"
+#include "moe_otd_placement_v2.hpp"
+#include "moe_otd_residency_v2.hpp"
 
 namespace ov::intel_gpu::ocl::moe {
 
@@ -27,13 +31,93 @@ size_t ResidentExpertWeightProvider::acquire_one(uint32_t expert, cldnn::stream&
 OffloadExpertWeightProvider::OffloadExpertWeightProvider(size_t capacity,
                                                          const cldnn::MOECompressed::Config& config,
                                                          std::vector<size_t> weight_bin_offsets,
-                                                         std::filesystem::path weights_path)
+                                                         std::filesystem::path weights_path,
+                                                         const std::string& trace_layer_name)
     : _capacity(capacity),
       _config(config),
       _weight_bin_offsets(std::move(weight_bin_offsets)),
       _weights_path(std::move(weights_path)),
       _cache(std::make_shared<LRUCache>(capacity)),
-      _weight_reader(_weights_path) {}
+      _weight_reader(_weights_path) {
+    if (auto* trace = moe_otd::get_trace_writer()) {
+        _trace_layer = trace->register_layer(trace_layer_name, _weights_path.generic_string(), _capacity, _config.num_expert, _config.top_k);
+    }
+}
+
+void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const std::filesystem::path& dir, const moe_otd::RoutedTensorLayouts& layouts) {
+    _pack.reset();
+    _pack_reader.reset();
+    _pack_name.clear();
+    if (mode == moe_otd::PackMode::off) {
+        return;
+    }
+    OPENVINO_ASSERT(!dir.empty(), "MoE OTD pack mode requires GPU_MOE_OTD_PACK_DIR");
+
+    const auto spec = moe_otd::make_pack_spec(_config, _weight_bin_offsets, layouts, _weight_reader);
+    // Soft profile-scored residency priority. OFF unless an immutable plan dir
+    // was provided explicitly; no prefetch, USM-host allocator or eviction
+    // of live GPU reader ownership is enabled by this policy.
+    if (const char* residency_dir = std::getenv("OV_GPU_MOE_OTD_RESIDENCY_DIR")) {
+        OPENVINO_ASSERT(*residency_dir, "OTD residency directory must not be empty");
+        const auto tiers = moe_otd::load_residency_v2(residency_dir, spec, _capacity);
+        _cache->set_priorities(tiers);
+    } else {
+        _cache->set_priorities({});
+    }
+    const auto path = dir / spec.file_name();
+    if (mode == moe_otd::PackMode::build) {
+        // Profile-derived placements are accepted ONLY during build, never by
+        // altering the router or a resident slot. A configured directory is
+        // exhaustive: missing layer keys fail closed, not identity fallback.
+        std::vector<uint32_t> placement;
+        if (const char* layout_dir = std::getenv("OV_GPU_MOE_OTD_PLACEMENT_DIR")) {
+            OPENVINO_ASSERT(*layout_dir, "OTD placement directory cannot be empty");
+            placement = moe_otd::load_placement_v2(layout_dir, spec);
+        }
+        const auto built = moe_otd::build_layer_pack(dir, spec, _config, layouts, _weight_reader, placement);
+        // Layers compile on parallel threads; one write per line keeps messages from interleaving.
+        std::cerr << ("MOE OTD pack " + std::string(built.reused_existing ? "reused " : "built ") + built.path.filename().string() +
+                      " bytes=" + std::to_string(built.bytes_written) + "\n");
+    }
+
+    std::string reason;
+    auto pack = moe_otd::PackLayout::open(path, spec, &reason);
+    if (!pack) {
+        OPENVINO_ASSERT(mode != moe_otd::PackMode::require, "MoE OTD pack ", path.filename().string(), " is unusable: ", reason);
+        std::cerr << ("MOE OTD pack " + path.filename().string() + " unusable (" + reason + "), streaming from weights file\n");
+        return;
+    }
+    // PackLayout::open used its own short-lived stream. Open the serving handle NOW,
+    // and validate the exact metadata from that handle before accepting the pack.
+    // On POSIX rename, this pins the old inode; on Windows it also prevents replacing
+    // the file while a non-FILE_SHARE_DELETE reader is alive. No read can silently
+    // switch to a new file after its expected checksum table was loaded.
+    std::unique_ptr<moe_otd::ParallelWeightReader> reader;
+    try {
+        reader = std::make_unique<moe_otd::ParallelWeightReader>(path);
+        const auto file_bytes = reader->file_size();  // eagerly opens / pins the handle
+        if (!pack->matches_reader_snapshot(file_bytes, [&](char* dst, size_t size, uint64_t offset) {
+                reader->read(dst, size, offset);
+            })) {
+            reason = "pack metadata changed before the serving reader was opened";
+            pack.reset();
+        }
+    } catch (const std::exception&) {
+        reason = "cannot open or read the serving pack handle";
+        pack.reset();
+        reader.reset();
+    }
+    if (!pack) {
+        OPENVINO_ASSERT(mode != moe_otd::PackMode::require,
+                        "MoE OTD pack ", path.filename().string(), " is unusable: ", reason);
+        std::cerr << ("MOE OTD pack " + path.filename().string() + " unusable (" + reason +
+                      "), streaming from weights file\n");
+        return;
+    }
+    _pack = std::move(pack);
+    _pack_reader = std::move(reader);
+    _pack_name = path.filename().string();
+}
 
 void OffloadExpertWeightProvider::bind(cldnn::moe_weights& resident) {
     _resident = &resident;
@@ -57,65 +141,101 @@ void OffloadExpertWeightProvider::fill_routed_weight_views(cldnn::moe_weights& /
     views.zp[2] = _resident->down_z;
 }
 
-std::optional<ExpertSlotLease> OffloadExpertWeightProvider::try_acquire_simultaneous(const std::vector<uint32_t>& experts, cldnn::stream& stream) {
-    // Deduplicate to check capacity
-    std::unordered_map<uint32_t, size_t> expert_to_slot;
-    expert_to_slot.reserve(experts.size());
-
-    std::vector<size_t> slots(experts.size());
+LRUCache::Lookup OffloadExpertWeightProvider::acquire_slot(uint32_t expert, cldnn::stream& stream, uint64_t trace_call,
+                                                        const std::vector<size_t>& required_experts) {
     auto* perf = moe_otd::get_perf_counters();
+    auto* trace = moe_otd::get_trace_writer();
 
-    for (size_t i = 0; i < experts.size(); i++) {
-        const uint32_t expert = experts[i];
-        auto it = expert_to_slot.find(expert);
-        if (it != expert_to_slot.end()) {
-            slots[i] = it->second;
-            continue;
+    const auto item = _cache->lookup(expert, required_experts);
+    moe_otd::ExpertLoadStats load;
+
+    if (item.hit) {
+        if (perf) {
+            perf->gpu_hits.fetch_add(1, std::memory_order_relaxed);
         }
-
-        // Check if we would exceed capacity
-        if (expert_to_slot.size() >= _capacity) {
-            return std::nullopt;
+    } else {
+        if (perf) {
+            perf->gpu_misses.fetch_add(1, std::memory_order_relaxed);
+            if (item.evicted) {
+                perf->evictions.fetch_add(1, std::memory_order_relaxed);
+            }
         }
-
-        const auto item = _cache->get_lru_item(expert);
-        const auto slot = item.first;
-
-        if (item.second) {
-            if (perf)
-                perf->gpu_hits.fetch_add(1, std::memory_order_relaxed);
+        OPENVINO_ASSERT(_resident != nullptr, "OffloadExpertWeightProvider: resident buffers not bound");
+        if (_pack) {
+            // The slot stays unfilled on failure, so a later lookup of this expert is a miss, never a stale hit.
+            try {
+                moe_otd::fill_weights_from_pack(stream, *_pack, *_pack_reader, *_resident, expert, item.slot, _pack_staging, trace ? &load : nullptr);
+            } catch (const moe_otd::PackIntegrityError& e) {
+                OPENVINO_THROW("MoE OTD pack ", _pack_name, " rejected expert ", expert, " for slot ", item.slot, ": ", e.what(),
+                               "; resident device memory was not modified");
+            }
         } else {
-            if (perf)
-                perf->gpu_misses.fetch_add(1, std::memory_order_relaxed);
-            OPENVINO_ASSERT(_resident != nullptr, "OffloadExpertWeightProvider: resident buffers not bound");
-            moe_otd::fill_weights_memory(stream, _config, _weight_bin_offsets, _weight_reader, *_resident, {expert}, {slot});
-            _cache->set_filled(slot);
+            moe_otd::fill_weights_memory(stream, _config, _weight_bin_offsets, _weight_reader, *_resident, {expert}, {item.slot}, trace ? &load : nullptr);
         }
-
-        expert_to_slot.emplace(expert, slot);
-        slots[i] = slot;
+        _cache->set_filled(item.slot);
     }
 
+    if (trace) {
+        trace->expert(trace_call, _trace_layer, expert, item.slot, item.hit, item.evicted, load);
+    }
+    return item;
+}
+
+std::optional<ExpertSlotLease> OffloadExpertWeightProvider::try_acquire_simultaneous(const std::vector<uint32_t>& experts, cldnn::stream& stream) {
+    std::vector<uint32_t> unique_experts;
+    {
+        std::unordered_set<uint32_t> seen;
+        seen.reserve(experts.size());
+        for (uint32_t expert : experts) {
+            if (seen.insert(expert).second) {
+                unique_experts.push_back(expert);
+            }
+        }
+    }
+
+    auto* trace = moe_otd::get_trace_writer();
+    uint64_t trace_call = 0;
+    if (trace) {
+        trace_call = trace->begin_call(_trace_layer, moe_otd::AcquireKind::simultaneous, experts.size(), unique_experts);
+    }
+
+    // Reject before touching the cache: loading part of an oversized set would stream experts
+    // and evict resident ones that the caller's per-expert fallback then has to reload.
+    if (unique_experts.size() > _capacity) {
+        if (trace) {
+            trace->end_call(trace_call, true);
+        }
+        return std::nullopt;
+    }
+
+    std::unordered_map<uint32_t, size_t> expert_to_slot;
+    expert_to_slot.reserve(unique_experts.size());
+    const std::vector<size_t> required_experts(unique_experts.begin(), unique_experts.end());
+    for (uint32_t expert : unique_experts) {
+        expert_to_slot.emplace(expert, acquire_slot(expert, stream, trace_call, required_experts).slot);
+    }
+
+    std::vector<size_t> slots(experts.size());
+    for (size_t i = 0; i < experts.size(); i++) {
+        slots[i] = expert_to_slot.at(experts[i]);
+    }
+
+    if (trace) {
+        trace->end_call(trace_call, false);
+    }
     return slots;
 }
 
 size_t OffloadExpertWeightProvider::acquire_one(uint32_t expert, cldnn::stream& stream) {
-    auto* perf = moe_otd::get_perf_counters();
-
-    const auto item = _cache->get_lru_item(expert);
-    const auto slot = item.first;
-
-    if (item.second) {
-        if (perf)
-            perf->gpu_hits.fetch_add(1, std::memory_order_relaxed);
-    } else {
-        if (perf)
-            perf->gpu_misses.fetch_add(1, std::memory_order_relaxed);
-        OPENVINO_ASSERT(_resident != nullptr, "OffloadExpertWeightProvider: resident buffers not bound");
-        moe_otd::fill_weights_memory(stream, _config, _weight_bin_offsets, _weight_reader, *_resident, {expert}, {slot});
-        _cache->set_filled(slot);
+    auto* trace = moe_otd::get_trace_writer();
+    uint64_t trace_call = 0;
+    if (trace) {
+        trace_call = trace->begin_call(_trace_layer, moe_otd::AcquireKind::one, 1, {expert});
     }
-
+    const auto slot = acquire_slot(expert, stream, trace_call).slot;
+    if (trace) {
+        trace->end_call(trace_call, false);
+    }
     return slot;
 }
 

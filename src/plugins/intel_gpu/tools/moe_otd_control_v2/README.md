@@ -14,6 +14,30 @@ the 2026.5 donor. Files live under `src/plugins/intel_gpu/src/graph/impls/ocl_v2
 
 ## Host invocation
 
+The controls, actual native pack codec/publication tests, and LRU regressions
+can also be built independently of the full GPU runtime:
+
+```bat
+cmake -S src/plugins/intel_gpu/tools/moe_otd_control_v2 -B build/otd-controls -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/otd-controls --parallel 2
+ctest --test-dir build/otd-controls -V
+```
+
+This requires the pinned `thirdparty/gtest/gtest` submodule. It runs host code,
+not GPU kernels. On Windows 2026-10-24, MSVC 14.44.35207 built all three
+targets with `/std:c++17 /W4 /WX`: control harness PASS, three LRU scenarios
+PASS, and 24 pack codec/publication tests PASS. The independent Python
+verifier passed 14 tests. Full plugin and `ov_gpu_unit_tests` remain BUILDING.
+
+The initial N1 port now connects per-layer pack specs, placement/residency
+sidecars, checked packed reads and tracing to the 2026.4 provider and graph
+factory, including compiled-cache loading. Only the source donor's runtime,
+provider and LRU pieces were ported; the target's GEMM kernels and dispatch
+paths remain unchanged. The simultaneous working set is protected from
+priority-based self-eviction during acquisition. This protection is not a
+GPU event lease. N2/N3/N4 native runtime gates remain open; do not enable
+speculative loading or accept packed GPU serving from these host results.
+
 Windows Developer Command Prompt:
 
 ```bat
