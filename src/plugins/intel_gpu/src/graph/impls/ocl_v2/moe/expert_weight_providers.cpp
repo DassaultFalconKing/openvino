@@ -143,7 +143,7 @@ void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const s
             out.clear();
             out.seekp(0, std::ios::end);
             out << "LAYER " << spec.file_name().substr(4, 16) << " "
-                << (*build_reused ? "reused" : "built") << "\\n";
+                << (*build_reused ? "reused" : "built") << "\n";
             out.flush();
             OPENVINO_ASSERT(out.good(), "CIB2 native build receipt write failed");
         }
