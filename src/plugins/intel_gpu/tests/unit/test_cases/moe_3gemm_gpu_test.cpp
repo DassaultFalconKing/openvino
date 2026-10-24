@@ -115,6 +115,24 @@ struct Moe3GemmReference {
         return {q_data, scales, zps};
     }
 
+    std::vector<float> dequantize_reference(const std::vector<uint8_t>& q,
+                                           const std::vector<ov::float16>& scales,
+                                           const std::vector<uint8_t>& zps,
+                                           size_t experts, size_t rows, size_t cols, size_t group_size) const {
+        const size_t groups = rows / group_size;
+        const uint8_t mask = config.is_u4 ? 0x0f : 0xff;
+        std::vector<float> values(experts * rows * cols);
+        for (size_t e = 0; e < experts; ++e)
+            for (size_t r = 0; r < rows; ++r)
+                for (size_t c = 0; c < cols; ++c) {
+                    const size_t group = e * groups * cols + (r / group_size) * cols + c;
+                    const float value = static_cast<float>(q[e * rows * cols + c * rows + r] & mask);
+                    const float zp = static_cast<float>(zps[group] & mask);
+                    values[e * rows * cols + r * cols + c] = (value - zp) * static_cast<float>(scales[group]);
+                }
+        return values;
+    }
+
     std::tuple<std::vector<uint8_t>, std::vector<ov::float16>> quantize_symmetric(const std::vector<float>& data,
                                                                                   size_t expert_num,
                                                                                   size_t rows,
@@ -391,6 +409,7 @@ struct Moe3GemmTestParams {
     size_t top_k;
     size_t group_size;
     bool is_signed = false;
+    bool quantization_matched_reference = false;
 };
 
 class moe_3gemm_compressed_gpu_random : public ::testing::TestWithParam<std::tuple<cldnn::MoERouterFused::RoutingType, Moe3GemmTestParams>> {};
@@ -575,7 +594,27 @@ TEST_P(moe_3gemm_compressed_gpu_random, moe_accuracy_test_random) {
     // SigmoidBias routing performs all routing math (sigmoid, bias, normalization) in f16 on the kernel side,
     // while the reference uses f32, leading to slightly larger numerical divergence than Softmax.
     const float base_tolerance = routing_type == cldnn::MoERouterFused::RoutingType::SIGMOID_BIAS ? 0.3f : 0.15f;
-    const float tolerance = base_tolerance * (config.hidden_size / 128);
+    const float tolerance = (param.quantization_matched_reference ? 0.05f : base_tolerance) * (config.hidden_size / 128);
+    if (param.quantization_matched_reference) {
+        const auto dq0 = ref.dequantize_reference(w0_q, w0_scale, w0_zp, config.num_experts, config.hidden_size, config.inter_size, config.group_size);
+        const auto dq1 = ref.dequantize_reference(w1_q, w1_scale, w1_zp, config.num_experts, config.hidden_size, config.inter_size, config.group_size);
+        const auto dq2 = ref.dequantize_reference(w2_q, w2_scale, w2_zp, config.num_experts, config.inter_size, config.hidden_size, config.group_size);
+        auto exact = routing_type == cldnn::MoERouterFused::RoutingType::SIGMOID_BIAS
+            ? ref.run_reference_sigmoid(hidden_states, routing_weights, routing_bias_data, routing_eps_val, dq0, dq1, dq2)
+            : ref.run_reference_softmax(hidden_states, routing_weights, dq0, dq1, dq2);
+        float original_error = 0, quantized_error = 0, reference_drift = 0;
+        for (size_t i = 0; i < exact.size(); ++i) {
+            original_error = std::max(original_error, std::fabs(static_cast<float>(output_ptr[i]) - static_cast<float>(ref_output[i])));
+            quantized_error = std::max(quantized_error, std::fabs(static_cast<float>(output_ptr[i]) - static_cast<float>(exact[i])));
+            reference_drift = std::max(reference_drift, std::fabs(static_cast<float>(ref_output[i]) - static_cast<float>(exact[i])));
+        }
+        std::cout << "GROUPED_REFERENCE_DIAGNOSTIC original_max=" << original_error
+                  << " quantized_max=" << quantized_error << " quantization_drift=" << reference_drift << std::endl;
+        // Compare the prefill path with the actual q/FP16-scale/packed-zp
+        // representation, not quantization drift from the original weights.
+        // Existing cohorts keep their original reference and tolerance.
+        ref_output = std::move(exact);
+    }
     for (size_t i = 0; i < ref_output.size(); ++i) {
         ASSERT_NEAR(static_cast<float>(output_ptr[i]), static_cast<float>(ref_output[i]), tolerance);
     }
@@ -593,6 +632,15 @@ INSTANTIATE_TEST_SUITE_P(smoke,
                                                               Moe3GemmTestParams{1, false, 256, 512, 4, 2, 256},
                                                               Moe3GemmTestParams{1, true, 512, 512, 4, 2, 512},
                                                               Moe3GemmTestParams{1, false, 512, 512, 4, 2, 512})));
+
+// Keep a prefill cohort above the default batched-GEMV threshold (32).
+// The ordinary 1/16-token cases do not execute the default grouped GEMM path.
+INSTANTIATE_TEST_SUITE_P(smoke_grouped_prefill,
+                         moe_3gemm_compressed_gpu_random,
+                         ::testing::Combine(::testing::Values(cldnn::MoERouterFused::RoutingType::SOFTMAX,
+                                                              cldnn::MoERouterFused::RoutingType::SIGMOID_BIAS),
+                                            ::testing::Values(Moe3GemmTestParams{64, true, 128, 256, 4, 2, 128, false, true},
+                                                              Moe3GemmTestParams{64, false, 128, 256, 4, 2, 128, false, true})));
 
 // Sub-128 weight quantization group size (e.g. trinity-mini afmoe uses group_size=64
 // with SIGMOID_BIAS routing). Limited to SIGMOID_BIAS to mirror real model usage and
