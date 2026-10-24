@@ -11,6 +11,7 @@
 using namespace ov::intel_gpu::ocl::moe_otd;
 int main() {
     GpuSlotLeaseLedger leases(2);
+    bool bad = false;
     const auto w = leases.begin_write(0);
     assert(w);
     std::atomic<bool> copied{false};
@@ -30,12 +31,31 @@ int main() {
     assert(!leases.begin_write(0));
     used.store(true);
     assert(leases.can_evict(0));
+    // Missing completion must not retire a live GPU consumer.
+    const auto no_event = leases.begin_read(0, w->generation);
+    assert(no_event);
+    bad = false;
+    try { leases.retire_read(*no_event, {}); }
+    catch (const std::invalid_argument&) { bad = true; }
+    assert(bad);
+    assert(!leases.can_evict(0));
+    auto owner = std::make_shared<std::atomic<bool>>(false);
+    std::weak_ptr<std::atomic<bool>> weak = owner;
+    leases.retire_read(*no_event, [keep_alive = owner] { return keep_alive->load(); });
+    owner.reset();
+    assert(!weak.expired() && !leases.can_evict(0));
+    auto signal = weak.lock();
+    assert(signal);
+    signal->store(true);
+    signal.reset();
+    assert(leases.can_evict(0));
+    assert(weak.expired());  // no event owner leaked after completion
     const auto w2 = leases.begin_write(0);
     assert(w2 && w2->generation > w->generation);
     assert(!leases.resident(0, w->generation));
     leases.cancel_unsubmitted_write(*w2);
     assert(!leases.resident(0, w2->generation));
-    bool bad = false;
+    bad = false;
     try { leases.cancel_unsubmitted_write(*w2); }
     catch (const std::logic_error&) { bad = true; }
     assert(bad);
