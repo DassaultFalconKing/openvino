@@ -2572,8 +2572,8 @@ public:
         // clones cannot recycle slots until this scope releases its lock.
         scratch_buffers scratch;
         auto execution_scope = _weight_provider->enter_execution([&stream] {
-            stream.get_onednn_stream().wait();
-            stream.finish();
+            moe_otd::drain_or_fail_stop([&stream] { stream.get_onednn_stream().wait(); },
+                                      [&stream] { stream.finish(); });
         });
 
         cldnn::event::ptr ret_env = nullptr;

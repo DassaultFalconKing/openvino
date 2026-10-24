@@ -42,9 +42,13 @@ speculative loading or accept packed GPU serving from these host results.
 
 `moe_otd_execution_guard.hpp` serializes executions sharing an offloaded
 provider. The graph drains both oneDNN and OCL before releasing that lock,
-including early returns and exception/cancellation unwinding. A drain error
-poisons the provider for subsequent executions; normal-exit drain failures
-propagate, while an existing cancellation exception is preserved. Scratch
+including early returns and exception/cancellation unwinding. The native
+adapter independently attempts both drains. If either fails, it emits
+`OTD_FATAL_UNVERIFIED_GPU_COMPLETION` and exits the process with code 86,
+without resource teardown. Poison alone cannot retain the request and engine
+owners during failed-drain unwind. Context-level quarantine/recovery is not
+implemented; the fail-stop policy deliberately sacrifices all active requests
+on an unverified GPU completion. Successful drains preserve cancellation. Scratch
 storage is declared before the guard so the drain precedes scratch destruction.
 The r0 path bypasses this gate. Resident arena memory owners are retained in
 the provider, and rebinding the cache to a different arena fails closed.
@@ -55,6 +59,23 @@ while unwinding, and r0 bypass. This is a synchronous fallback, **not a
 completed per-slot GPU event lease integration**. Device-reset teardown,
 actual consumer-event ownership, clone arena eligibility and live concurrency
 must still be validated before serving. Prefetch remains disabled.
+
+Four additional child-process fault-injection cases verify independent drain
+attempts, exit code 86 after either/both failures, and successful completion.
+The generic host gate still tests poison/unwind semantics; the actual native
+adapter uses the stronger fail-stop policy above.
+
+### N3 Windows probe adapter
+
+`moe_otd_windows_uma.hpp` samples GlobalMemoryStatusEx and the exact supplied
+adapter LUID's DXGI/WDDM budget/current process usage. Probe failures throw;
+there is no guessed adapter or additive CPU+GPU free-memory budget. The
+`otd_windows_uma_probe` target enumerates Intel adapters for inventory only.
+It was compiled with MSVC C++17 /W4 /WX and run on the local Arc 140V. The
+probe reports overlapping physical availability and WDDM remaining budget
+separately. This is **not** global committed/pending reservation accounting:
+the provider, KV cache and workspace allocations are not yet enrolled in one
+cross-layer controller. Multiple LUID observations must never be summed.
 
 Windows Developer Command Prompt:
 

@@ -2,12 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include <exception>
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <mutex>
 #include <stdexcept>
 #include <utility>
 
 namespace ov::intel_gpu::ocl::moe_otd {
+// A failed queue drain leaves completion unverified. This layer has no owner
+// for the entire request/context, so returning into ordinary teardown is unsafe.
+// Attempt both queues, then fail-stop without running resource destructors.
+// Context-level quarantine/recovery may replace this only with lifetime proof.
+template <typename OneDnnDrain, typename OclDrain>
+void drain_or_fail_stop(OneDnnDrain&& onednn, OclDrain&& ocl) noexcept {
+    bool failed = false;
+    try { onednn(); } catch (...) { failed = true; }
+    try { ocl(); } catch (...) { failed = true; }
+    if (failed) {
+        std::fputs("OTD_FATAL_UNVERIFIED_GPU_COMPLETION: stopping process without resource teardown\n", stderr);
+        std::fflush(stderr);
+        std::_Exit(86);
+    }
+}
+
 // Conservative fallback until terminal event ownership is implemented for every
 // dispatch path. Shared by provider clones. A failed GPU drain poisons the gate;
 // no subsequent request may recycle its potentially live resident arena.

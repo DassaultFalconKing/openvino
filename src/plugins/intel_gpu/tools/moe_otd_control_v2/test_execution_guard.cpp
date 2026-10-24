@@ -9,7 +9,20 @@
 
 using ov::intel_gpu::ocl::moe_otd::SynchronousExecutionGate;
 static void check(bool ok) { if (!ok) throw std::runtime_error("execution gate regression"); }
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2) {
+        const std::string mode(argv[1]);
+        ov::intel_gpu::ocl::moe_otd::drain_or_fail_stop(
+            [&] {
+                std::fputs("ONEDNN_DRAIN_ATTEMPTED\n", stderr);
+                if (mode == "--failed-drain" || mode == "--both-failed") throw std::runtime_error("oneDNN wait failed");
+            },
+            [&] {
+                std::fputs("OCL_DRAIN_ATTEMPTED\n", stderr);
+                if (mode == "--failed-ocl-drain" || mode == "--both-failed") throw std::runtime_error("OCL finish failed");
+            });
+        return mode == "--good-drain" ? 0 : 1;
+    }
     SynchronousExecutionGate gate;
     {
         auto resident_scope = gate.enter([] { throw std::runtime_error("r0 must bypass drain"); }, false);
