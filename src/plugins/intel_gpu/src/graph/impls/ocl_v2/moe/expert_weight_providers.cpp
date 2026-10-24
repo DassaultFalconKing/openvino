@@ -120,7 +120,16 @@ void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const s
 }
 
 void OffloadExpertWeightProvider::bind(cldnn::moe_weights& resident) {
-    _resident = &resident;
+    if (_bound) {
+        OPENVINO_ASSERT(_resident->gate_w == resident.gate_w && _resident->gate_s == resident.gate_s &&
+                        _resident->gate_z == resident.gate_z && _resident->up_w == resident.up_w &&
+                        _resident->up_s == resident.up_s && _resident->up_z == resident.up_z &&
+                        _resident->down_w == resident.down_w && _resident->down_s == resident.down_s &&
+                        _resident->down_z == resident.down_z,
+                        "OTD provider cannot reuse cached slot mappings across different resident arenas");
+    }
+    _resident_storage = resident;
+    _resident = &_resident_storage;
     _cache->set_initialized();
     _bound = true;
     GPU_DEBUG_TRACE << "MOE OTD bind: resident_slots=" << _capacity << " total_experts=" << _config.num_expert

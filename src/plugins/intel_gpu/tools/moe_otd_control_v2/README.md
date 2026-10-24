@@ -38,6 +38,24 @@ priority-based self-eviction during acquisition. This protection is not a
 GPU event lease. N2/N3/N4 native runtime gates remain open; do not enable
 speculative loading or accept packed GPU serving from these host results.
 
+### Conservative N2 execution fallback
+
+`moe_otd_execution_guard.hpp` serializes executions sharing an offloaded
+provider. The graph drains both oneDNN and OCL before releasing that lock,
+including early returns and exception/cancellation unwinding. A drain error
+poisons the provider for subsequent executions; normal-exit drain failures
+propagate, while an existing cancellation exception is preserved. Scratch
+storage is declared before the guard so the drain precedes scratch destruction.
+The r0 path bypasses this gate. Resident arena memory owners are retained in
+the provider, and rebinding the cache to a different arena fails closed.
+
+The host execution-guard test exercises four concurrent request threads (400
+serialized sections), cancellation, drain failure, poisoned reuse, failure
+while unwinding, and r0 bypass. This is a synchronous fallback, **not a
+completed per-slot GPU event lease integration**. Device-reset teardown,
+actual consumer-event ownership, clone arena eligibility and live concurrency
+must still be validated before serving. Prefetch remains disabled.
+
 Windows Developer Command Prompt:
 
 ```bat

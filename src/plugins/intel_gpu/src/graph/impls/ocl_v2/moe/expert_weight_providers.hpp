@@ -116,6 +116,9 @@ private:
     // Content-keyed file name only, so diagnostics carry no machine-specific directory.
     std::string _pack_name;
     std::vector<uint8_t> _pack_staging;
+    // Retain the arena's memory owners rather than a pointer into one clone's
+    // primitive instance, which may be destroyed before another clone.
+    cldnn::moe_weights _resident_storage{};
     cldnn::moe_weights* _resident = nullptr;
     bool _bound = false;
 };

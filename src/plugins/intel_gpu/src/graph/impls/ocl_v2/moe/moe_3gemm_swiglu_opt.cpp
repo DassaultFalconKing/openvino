@@ -676,7 +676,7 @@ public:
     void bind_weights_on_first_exec(typed_primitive_inst<moe_3gemm_fused_compressed>& instance) {
         if (!_weight_provider->is_offloaded())
             return;
-        if (!_weight_provider->is_bound()) {
+        {
             instance._weights.gate_w = instance.input_memory_ptr(static_cast<size_t>(MOE3GemmInputIndex::WEIGHT_0));
             instance._weights.gate_z = instance.input_memory_ptr(static_cast<size_t>(MOE3GemmInputIndex::ZP_0));
             instance._weights.gate_s = instance.input_memory_ptr(static_cast<size_t>(MOE3GemmInputIndex::SCALE_0));
@@ -2567,6 +2567,15 @@ public:
 
         OPENVINO_ASSERT(_weight_provider, "expert weight provider not initialized");
 
+        // Drain GPU readers before scratch storage is destroyed, including
+        // early return, cancellation and exception exits. Shared provider
+        // clones cannot recycle slots until this scope releases its lock.
+        scratch_buffers scratch;
+        auto execution_scope = _weight_provider->enter_execution([&stream] {
+            stream.get_onednn_stream().wait();
+            stream.finish();
+        });
+
         cldnn::event::ptr ret_env = nullptr;
         _has_shared_expert = (config.num_shared_expert > 0);
 
@@ -2585,7 +2594,6 @@ public:
 
         bind_weights_on_first_exec(instance);
 
-        scratch_buffers scratch;
         prepare_internal_buffers(instance, scratch, token_num);
         kernel_dump_info.clear_entries();
 
