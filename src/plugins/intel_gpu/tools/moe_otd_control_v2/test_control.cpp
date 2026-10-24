@@ -11,28 +11,51 @@
 using namespace ov::intel_gpu::ocl::moe_otd;
 int main() {
     GpuSlotLeaseLedger leases(2);
+    bool bad = false;
     const auto w = leases.begin_write(0);
     assert(w);
     std::atomic<bool> copied{false};
     leases.submit_write(*w, [&] { return copied.load(); });
     assert(!leases.resident(0, w->generation));
     assert(!leases.can_evict(0));
+    assert(!leases.begin_read(0, w->generation));  // GPU copy still in flight
     copied.store(true);
     assert(leases.resident(0, w->generation));
     const auto r = leases.begin_read(0, w->generation);
     assert(r);
+    assert(!leases.begin_read(0, w->generation + 1));  // stale generation
+    assert(!leases.begin_write(0));  // active GPU reader prevents overwrite
     std::atomic<bool> used{false};
     leases.retire_read(*r, [&] { return used.load(); });
     assert(!leases.can_evict(0));
     assert(!leases.begin_write(0));
     used.store(true);
     assert(leases.can_evict(0));
+    // Missing completion must not retire a live GPU consumer.
+    const auto no_event = leases.begin_read(0, w->generation);
+    assert(no_event);
+    bad = false;
+    try { leases.retire_read(*no_event, {}); }
+    catch (const std::invalid_argument&) { bad = true; }
+    assert(bad);
+    assert(!leases.can_evict(0));
+    auto owner = std::make_shared<std::atomic<bool>>(false);
+    std::weak_ptr<std::atomic<bool>> weak = owner;
+    leases.retire_read(*no_event, [keep_alive = owner] { return keep_alive->load(); });
+    owner.reset();
+    assert(!weak.expired() && !leases.can_evict(0));
+    auto signal = weak.lock();
+    assert(signal);
+    signal->store(true);
+    signal.reset();
+    assert(leases.can_evict(0));
+    assert(weak.expired());  // no event owner leaked after completion
     const auto w2 = leases.begin_write(0);
     assert(w2 && w2->generation > w->generation);
     assert(!leases.resident(0, w->generation));
     leases.cancel_unsubmitted_write(*w2);
     assert(!leases.resident(0, w2->generation));
-    bool bad = false;
+    bad = false;
     try { leases.cancel_unsubmitted_write(*w2); }
     catch (const std::logic_error&) { bad = true; }
     assert(bad);
@@ -55,6 +78,34 @@ int main() {
     assert(bad);
     budget.release(*staging);
     budget.release(*kv);
+    // N3: same exact-LUID ledger is shared across model/layer owners.
+    auto global_a = GlobalUmaAdmission::for_adapter("00000000000000a1", {1000, 600, 100});
+    auto global_b = GlobalUmaAdmission::for_adapter("00000000000000a1", {9000, 9000, 0});
+    auto other_gpu = GlobalUmaAdmission::for_adapter("00000000000000a2", {1000, 600, 100});
+    assert(global_a == global_b && global_a != other_gpu);
+    const std::vector<UmaAdmissionLedger::Demand> cohort = {
+        {UmaAdmissionLedger::Class::weights, 250, true},
+        {UmaAdmissionLedger::Class::kv, 200, true},
+        {UmaAdmissionLedger::Class::staging, 100, false}
+    };
+    const auto admitted = global_a->reserve_batch(cohort);
+    assert(admitted && admitted->size() == 3);
+    assert(global_b->system_reserved() == 550 && global_b->gpu_reserved() == 450);
+    assert(!global_b->reserve(UmaAdmissionLedger::Class::workspace, 200, true));
+    assert(!global_b->reserve_batch({{UmaAdmissionLedger::Class::workspace, 100, true},
+                                     {UmaAdmissionLedger::Class::prefetch, 200, true}}));
+    assert(global_b->system_reserved() == 550 && global_b->gpu_reserved() == 450);
+    // A fresh low WDDM budget must tighten admission, never grant stale capacity.
+    global_b->observe({500, 460, 100});
+    assert(!global_a->reserve(UmaAdmissionLedger::Class::workspace, 1, true));
+    for (auto ticket : *admitted) global_a->release(ticket);
+    global_a->reset({1000, 600, 100});
+    assert(global_b->system_reserved() == 0 && global_b->gpu_reserved() == 0);
+    bad = false;
+    try { GlobalUmaAdmission::for_adapter("wrong-luid", {1000, 600, 100}); }
+    catch (const std::invalid_argument&) { bad = true; }
+    assert(bad);
+
     bad = false;
     try { budget.release(*kv); }
     catch (const std::logic_error&) { bad = true; }
