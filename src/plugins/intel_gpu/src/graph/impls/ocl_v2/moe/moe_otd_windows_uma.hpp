@@ -12,6 +12,8 @@
 #include <windows.h>
 #include <dxgi1_4.h>
 #include <wrl/client.h>
+#include <iomanip>
+#include <sstream>
 #pragma comment(lib, "dxgi.lib")
 
 namespace ov::intel_gpu::ocl::moe_otd {
@@ -54,6 +56,18 @@ inline WindowsUmaSnapshot sample_windows_uma(LUID executing_adapter, UINT node =
         return {memory.ullTotalPhys, memory.ullAvailPhys, info.Budget, info.CurrentUsage};
     }
     throw std::runtime_error("OTD UMA: executing GPU LUID not found");
+}
+// All layers and model/KV owners on the same adapter must share this
+// process-wide ledger. No allocation interception is implied by obtaining it.
+// The caller must hold tickets for actual allocations and refresh observations.
+inline std::shared_ptr<UmaAdmissionLedger> global_windows_uma_ledger(
+    LUID executing_adapter, uint64_t os_reserve_bytes, UINT node = 0) {
+    const auto sample = sample_windows_uma(executing_adapter, node);
+    std::ostringstream key;
+    key << std::hex << std::setfill('0') << std::setw(8)
+        << static_cast<uint32_t>(executing_adapter.HighPart)
+        << std::setw(8) << static_cast<uint32_t>(executing_adapter.LowPart);
+    return GlobalUmaAdmission::for_adapter(key.str(), sample.admission_limits(os_reserve_bytes));
 }
 }  // namespace ov::intel_gpu::ocl::moe_otd
 #endif
