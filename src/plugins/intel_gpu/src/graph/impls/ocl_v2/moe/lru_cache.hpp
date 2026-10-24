@@ -3,6 +3,7 @@
 //
 
 #pragma once
+#include <functional>
 #include <list>
 #include <mutex>
 #include <optional>
@@ -31,6 +32,12 @@ public:
     // Advisory priorities cannot prohibit a demand miss: least-protected
     // resident wins; oldest wins ties. Empty vector restores exact LRU.
     void set_priorities(std::vector<uint8_t> priorities);
+
+    // N2 integration point: veto a candidate slot BEFORE changing LRU mapping.
+    // The callback MUST be nonblocking, noexcept in practice, and must not
+    // re-enter this cache. Wire to terminal-consumer completion, not producer
+    // copy completion. An empty guard preserves legacy synchronous behaviour.
+    void set_recycle_guard(std::function<bool(size_t)> can_recycle_slot);
     void evict_one();
 
     size_t size() const {
@@ -87,6 +94,7 @@ private:
     // Unoccupied slots, lowest index at the back so fresh caches assign slots 0, 1, 2, ...
     std::vector<size_t> m_free_slots;
     std::vector<uint8_t> m_priorities;
+    std::function<bool(size_t)> m_recycle_guard;
     std::unordered_map<Key, std::list<Node>::iterator, KeyHash> m_map;
     mutable std::mutex m_mutex;
 

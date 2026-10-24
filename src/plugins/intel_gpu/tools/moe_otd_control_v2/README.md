@@ -140,3 +140,36 @@ The native engineer must connect:
 
 No FULL V2 GPU acceptance, physical read benefit, or production PASS
 from header-only host simulation. Path A `usm_device` only. Path B OFF.
+
+
+## CIB2 N2/N3 safety incremental patch (2026-10-24)
+
+Review branch `dev/cib2-n2n3-safety-ledger-20261024`, based on the **2026.4** target PR #10.
+
+- `LRUCache::set_recycle_guard` is a callback-driven **veto before eviction**.
+  Wire only to an owner that knows each slot's actual *terminal consumer*
+  GPU event, across all queues. A producer/copy event is insufficient.
+  If none is available, keep the current synchronous drain path and do not
+  arm async prefetch. No callback keeps the old synchronous LRU behaviour.
+- Guard invoked under LRU mutex; callback must not re-enter LRU, wait on
+  cache-owned locks, or throw. Veto all slots => demand fails closed **without**
+  changing the expert mapping, and local code must handle backpressure.
+- `UmaAdmissionLedger::reserve_batch` is a single-lock, all-or-none CPU
+  staging + GPU-visible memory reservation. Both classes contribute to
+  shared system RAM; GPU-visible allocations also count against **overlapping**
+  exact-adapter WDDM budget. The reserved amounts here represent *pending*
+  allocations only, not verified process-wide committed usage.
+- Host regression assertions: `otd_lru_test` protects active slot, tests
+  all-guarded stop and progress after release; `otd_control_test` checks
+  atomic combined admission, rejection, and ticket release.
+- Limitations: real GPU event ownership, global OS/WDDM committed-vs-pending
+  reconciliation, PGP dispatcher, Pack V2 shards, and live GPU correctness
+  remain NOT_DONE/NOT_RUN. Path A only; Path B/prefetch OFF.
+
+For host controls (no Arc GPU acceptance implied):
+
+```powershell
+cmake -S src/plugins/intel_gpu/tools/moe_otd_control_v2 -B C:\temp\cib2-n2n3-test
+cmake --build C:\temp\cib2-n2n3-test --config Release
+ctest --test-dir C:\temp\cib2-n2n3-test -C Release --output-on-failure
+```

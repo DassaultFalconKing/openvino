@@ -27,6 +27,11 @@ void LRUCache::set_priorities(std::vector<uint8_t> priorities) {
     m_priorities = std::move(priorities);
 }
 
+void LRUCache::set_recycle_guard(std::function<bool(size_t)> can_recycle_slot) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_recycle_guard = std::move(can_recycle_slot);
+}
+
 uint8_t LRUCache::priority_of(size_t expert) const {
     return expert < m_priorities.size() ? m_priorities[expert] : uint8_t{0};
 }
@@ -51,13 +56,18 @@ std::optional<LRUCache::Node> LRUCache::evict_one_unlocked(const std::vector<siz
         if (std::find(required_experts.begin(), required_experts.end(), it->expert) != required_experts.end()) {
             continue;
         }
+        // Reject in-flight reader slots before mutating the expert->slot map.
+        // No callback means the existing synchronous-drain fallback behaviour.
+        if (m_recycle_guard && !m_recycle_guard(it->lru_expert_no)) {
+            continue;
+        }
         if (victim == m_list.end() || priority_of(it->expert) < priority_of(victim->expert)) {
             victim = it;
             if (priority_of(victim->expert) == 0) break;
         }
     }
     if (victim == m_list.end()) {
-        throw std::runtime_error("OTD cache: all slots belong to the simultaneous working set");
+        throw std::runtime_error("OTD cache: no recyclable slot (required experts or live GPU readers)");
     }
     const Node oldest = *victim;
     m_filled_list[oldest.lru_expert_no] = false;

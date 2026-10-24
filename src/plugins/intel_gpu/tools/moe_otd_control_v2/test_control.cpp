@@ -60,6 +60,26 @@ int main() {
     catch (const std::logic_error&) { bad = true; }
     assert(bad);
 
+    // N3: all-or-none admission of staged + GPU-visible workspace.
+    UmaAdmissionLedger combined({1024, 700, 124});
+    using C = UmaAdmissionLedger::Class;
+    auto bundle = combined.reserve_batch({{C::staging, 100, false},
+                                           {C::prefetch, 500, true}});
+    assert(bundle && bundle->size() == 2);
+    assert(combined.system_reserved() == 600);
+    assert(combined.gpu_reserved() == 500);
+    const auto before = combined.system_reserved();
+    assert(!combined.reserve_batch({{C::staging, 100, false},
+                                    {C::weights, 300, true}}));
+    assert(combined.system_reserved() == before && combined.gpu_reserved() == 500);
+    assert(!combined.reserve_batch({{C::staging, 0, false}}));
+    combined.release((*bundle)[0]);
+    combined.release((*bundle)[1]);
+    assert(combined.system_reserved() == 0 && combined.gpu_reserved() == 0);
+    auto over = combined.reserve_batch({{C::staging, UINT64_MAX, false},
+                                        {C::weights, 2, true}});
+    assert(!over);
+
     const std::vector<PredictedExpert> input = {
         {0, 4, 0.95, 800, 500, 450, 50, 128, false, false},
         {1, 8, 0.90, 600, 500, 400, 30, 256, false, false},
