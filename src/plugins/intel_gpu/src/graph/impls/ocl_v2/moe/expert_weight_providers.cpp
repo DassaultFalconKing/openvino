@@ -5,6 +5,8 @@
 #include "expert_weight_providers.hpp"
 
 #include <iostream>
+#include <fstream>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -65,6 +67,7 @@ void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const s
         _cache->set_priorities({});
     }
     const auto path = dir / spec.file_name();
+    std::optional<bool> build_reused;
     if (mode == moe_otd::PackMode::build) {
         // Profile-derived placements are accepted ONLY during build, never by
         // altering the router or a resident slot. A configured directory is
@@ -75,6 +78,7 @@ void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const s
             placement = moe_otd::load_placement_v2(layout_dir, spec);
         }
         const auto built = moe_otd::build_layer_pack(dir, spec, _config, layouts, _weight_reader, placement);
+        build_reused = built.reused_existing;
         // Layers compile on parallel threads; one write per line keeps messages from interleaving.
         std::cerr << ("MOE OTD pack " + std::string(built.reused_existing ? "reused " : "built ") + built.path.filename().string() +
                       " bytes=" + std::to_string(built.bytes_written) + "\n");
@@ -117,6 +121,33 @@ void OffloadExpertWeightProvider::configure_pack(moe_otd::PackMode mode, const s
     _pack = std::move(pack);
     _pack_reader = std::move(reader);
     _pack_name = path.filename().string();
+
+    // Emit a build-session receipt only after the current compiled layer has
+    // validated the native PackLayout and pinned its actual serving handle.
+    // OVMS checks this per-invocation receipt, never counts stale .pack files.
+    if (build_reused.has_value()) {
+        if (const char* receipt = std::getenv("OV_GPU_MOE_OTD_BUILD_RECEIPT")) {
+            OPENVINO_ASSERT(*receipt, "CIB2 native build receipt path is empty");
+            const std::filesystem::path receipt_path(receipt);
+            OPENVINO_ASSERT(std::filesystem::equivalent(receipt_path.parent_path().parent_path(), dir),
+                            "CIB2 native build receipt must belong to the active pack directory");
+            OPENVINO_ASSERT(std::filesystem::is_regular_file(receipt_path) &&
+                                !std::filesystem::is_symlink(receipt_path),
+                            "CIB2 native build receipt is not a regular file");
+            static std::mutex receipt_mutex;
+            std::lock_guard<std::mutex> guard(receipt_mutex);
+            std::fstream out(receipt_path, std::ios::binary | std::ios::in | std::ios::out);
+            std::string header;
+            OPENVINO_ASSERT(out && std::getline(out, header) && header == "CIB2_COMPILED_PACKS_V1",
+                            "CIB2 native build receipt has wrong session header");
+            out.clear();
+            out.seekp(0, std::ios::end);
+            out << "LAYER " << spec.file_name().substr(4, 16) << " "
+                << (*build_reused ? "reused" : "built") << "\\n";
+            out.flush();
+            OPENVINO_ASSERT(out.good(), "CIB2 native build receipt write failed");
+        }
+    }
 }
 
 void OffloadExpertWeightProvider::bind(cldnn::moe_weights& resident) {
