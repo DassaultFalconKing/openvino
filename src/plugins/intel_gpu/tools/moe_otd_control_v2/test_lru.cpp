@@ -39,5 +39,32 @@ int main() {
         const auto second = cache.lookup(3, required);
         require(first.slot != second.slot);
     }
-    std::cout << "LRU regressions: 3 PASS\n";
+    {
+        // N2: an in-use GPU reader slot cannot be evicted, even if it is LRU.
+        LRUCache cache(2);
+        const auto a = cache.lookup(0);
+        const auto b = cache.lookup(1);
+        cache.set_filled(a.slot);
+        cache.set_filled(b.slot);
+        cache.set_recycle_guard([&](size_t slot) { return slot != a.slot; });
+        const auto c = cache.lookup(2);
+        require(c.evicted && *c.evicted == 1 && c.slot == b.slot);
+        require(cache.lookup(0).hit);
+    }
+    {
+        // All leased slots -> fail before mutation, no stale hit, no eviction.
+        LRUCache cache(2);
+        auto a = cache.lookup(0);
+        auto b = cache.lookup(1);
+        cache.set_filled(a.slot);
+        cache.set_filled(b.slot);
+        cache.set_recycle_guard([](size_t) { return false; });
+        bool rejected = false;
+        try { (void)cache.lookup(2); } catch (const std::runtime_error&) { rejected = true; }
+        require(rejected && cache.size() == 2 && cache.evictions() == 0);
+        require(cache.lookup(0).hit && cache.lookup(1).hit);
+        cache.set_recycle_guard({});
+        require(cache.lookup(2).evicted.has_value());
+    }
+    std::cout << "LRU regressions: 5 PASS\n";
 }
