@@ -12,6 +12,7 @@
 #include "intel_gpu/primitives/moe_3gemm_fused_compressed.hpp"
 #include "intel_gpu/runtime/memory.hpp"
 #include "intel_gpu/runtime/stream.hpp"
+#include "moe_otd_execution_guard.hpp"
 
 namespace ov::intel_gpu::ocl::moe {
 
@@ -43,6 +44,12 @@ class IExpertWeightProvider {
 public:
     virtual ~IExpertWeightProvider() = default;
 
+    // Keep this scope as a direct local object so normal-exit drain failures
+    // propagate. Resident (r0) executions bypass the synchronous gate.
+    moe_otd::SynchronousExecutionGate::Scope enter_execution(std::function<void()> drain) {
+        return _execution_gate.enter(std::move(drain), is_offloaded());
+    }
+
     // Releases any pinning established by the most recent acquisition.
     virtual void release() = 0;
 
@@ -70,6 +77,8 @@ public:
 
     // Returns true after bind() has been called.
     virtual bool is_bound() const = 0;
+private:
+    moe_otd::SynchronousExecutionGate _execution_gate;
 };
 
 }  // namespace ov::intel_gpu::ocl::moe
