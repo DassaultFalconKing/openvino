@@ -17,10 +17,13 @@ int main() {
     leases.submit_write(*w, [&] { return copied.load(); });
     assert(!leases.resident(0, w->generation));
     assert(!leases.can_evict(0));
+    assert(!leases.begin_read(0, w->generation));  // GPU copy still in flight
     copied.store(true);
     assert(leases.resident(0, w->generation));
     const auto r = leases.begin_read(0, w->generation);
     assert(r);
+    assert(!leases.begin_read(0, w->generation + 1));  // stale generation
+    assert(!leases.begin_write(0));  // active GPU reader prevents overwrite
     std::atomic<bool> used{false};
     leases.retire_read(*r, [&] { return used.load(); });
     assert(!leases.can_evict(0));
@@ -55,6 +58,34 @@ int main() {
     assert(bad);
     budget.release(*staging);
     budget.release(*kv);
+    // N3: same exact-LUID ledger is shared across model/layer owners.
+    auto global_a = GlobalUmaAdmission::for_adapter("00000000000000a1", {1000, 600, 100});
+    auto global_b = GlobalUmaAdmission::for_adapter("00000000000000a1", {9000, 9000, 0});
+    auto other_gpu = GlobalUmaAdmission::for_adapter("00000000000000a2", {1000, 600, 100});
+    assert(global_a == global_b && global_a != other_gpu);
+    const std::vector<UmaAdmissionLedger::Demand> cohort = {
+        {UmaAdmissionLedger::Class::weights, 250, true},
+        {UmaAdmissionLedger::Class::kv, 200, true},
+        {UmaAdmissionLedger::Class::staging, 100, false}
+    };
+    const auto admitted = global_a->reserve_batch(cohort);
+    assert(admitted && admitted->size() == 3);
+    assert(global_b->system_reserved() == 550 && global_b->gpu_reserved() == 450);
+    assert(!global_b->reserve(UmaAdmissionLedger::Class::workspace, 200, true));
+    assert(!global_b->reserve_batch({{UmaAdmissionLedger::Class::workspace, 100, true},
+                                     {UmaAdmissionLedger::Class::prefetch, 200, true}}));
+    assert(global_b->system_reserved() == 550 && global_b->gpu_reserved() == 450);
+    // A fresh low WDDM budget must tighten admission, never grant stale capacity.
+    global_b->observe({500, 460, 100});
+    assert(!global_a->reserve(UmaAdmissionLedger::Class::workspace, 1, true));
+    for (auto ticket : *admitted) global_a->release(ticket);
+    global_a->reset({1000, 600, 100});
+    assert(global_b->system_reserved() == 0 && global_b->gpu_reserved() == 0);
+    bad = false;
+    try { GlobalUmaAdmission::for_adapter("wrong-luid", {1000, 600, 100}); }
+    catch (const std::invalid_argument&) { bad = true; }
+    assert(bad);
+
     bad = false;
     try { budget.release(*kv); }
     catch (const std::logic_error&) { bad = true; }
